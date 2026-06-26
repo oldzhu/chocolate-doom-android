@@ -6,6 +6,31 @@ Complete record of all decisions, fixes, and changes made during the Chocolate D
 
 ---
 
+## Pre-Release Features (2026-06-26)
+
+### Feature 1: Analog Joystick Touch-to-Move
+
+| Aspect | Detail |
+|--------|--------|
+| **Problem** | Fixed D-pad buttons cumbersome for touchscreen movement |
+| **Solution** | Floating analog joystick on left half of screen |
+| **Implementation** | New `AnalogJoystick.java` class + modified `TouchControls.java` |
+| **Design** | Touch anywhere on left half → joystick appears. Drag for 8-direction movement. Auto-run at 90%+ drag. |
+| **Files** | `AnalogJoystick.java` (new), `TouchControls.java` (modified) |
+
+### Feature 2: God Mode (IDDQD + IDKFA Cheat)
+
+| Aspect | Detail |
+|--------|--------|
+| **Problem** | No way to activate DOOM cheat codes without physical keyboard |
+| **Solution** | Triple-tap ☰ (Menu) within 1 second → injects `iddqd` + `idkfa` via keyboard events |
+| **Implementation** | `TouchControls.java` — `onMenuTapped()` triple-tap detection, `injectCheatSequence()` character injection, `showOverlay()` visual feedback |
+| **Activation** | Tap ☰ three times within 1000ms |
+| **Visual** | "⚡ GOD MODE ⚡" overlay text for 2 seconds |
+| **Effect** | Invulnerability (IDDQD) + all weapons/ammo/keys (IDKFA) |
+
+---
+
 ## v1.0 — Initial Working Port (2026-06-26)
 
 ### Dependencies Setup
