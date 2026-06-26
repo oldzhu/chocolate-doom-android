@@ -92,10 +92,17 @@ chocolate-doom-android/
 
 ### License
 
-This project's Java sources: **MIT**  
-Chocolate Doom: **GPLv2** — [chocolate-doom/chocolate-doom](https://github.com/chocolate-doom/chocolate-doom)  
-SDL2 & SDL2_mixer: **zlib** — [libsdl-org/SDL](https://github.com/libsdl-org/SDL)  
-Freedoom WADs: **BSD** — [freedoom/freedoom](https://github.com/freedoom/freedoom)
+| Component | License | Full Text |
+|-----------|---------|-----------|
+| Our Java sources | **MIT** | [LICENSE](LICENSE) |
+| Chocolate Doom | **GPLv2** | [COPYING.GPL](COPYING.GPL) |
+| SDL2 & SDL2_mixer | **zlib** | [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) |
+| Freedoom WADs | **BSD 3-Clause** | [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) |
+
+All licenses are GPLv2-compatible. The combined APK is effectively GPLv2.
+Our MIT-licensed files may also be used under GPLv2 when distributed together
+with Chocolate Doom. See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)
+for detailed compliance information.
 
 ---
 
@@ -187,7 +194,13 @@ chocolate-doom-android/
 
 ### 许可证
 
-本项目 Java 源码：**MIT**  
-Chocolate Doom：**GPLv2** — [chocolate-doom/chocolate-doom](https://github.com/chocolate-doom/chocolate-doom)  
-SDL2 & SDL2_mixer：**zlib** — [libsdl-org/SDL](https://github.com/libsdl-org/SDL)  
-Freedoom WADs：**BSD** — [freedoom/freedoom](https://github.com/freedoom/freedoom)
+| 组件 | 许可证 | 全文 |
+|-----------|---------|-----------|
+| 本项目的 Java 源码 | **MIT** | [LICENSE](LICENSE) |
+| Chocolate Doom | **GPLv2** | [COPYING.GPL](COPYING.GPL) |
+| SDL2 & SDL2_mixer | **zlib** | [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) |
+| Freedoom WADs | **BSD 3-Clause** | [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) |
+
+所有许可证均与 GPLv2 兼容。合并后的 APK 实质为 GPLv2。
+我们的 MIT 许可文件在与 Chocolate Doom 一同分发时，也可按 GPLv2 条款使用。
+详见 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)。
