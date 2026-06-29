@@ -11,9 +11,10 @@ Three features to implement before the first GitHub Release.
 **Priority**: 🔴 High — core UX
 **Complexity**: Medium
 **Files affected**: `TouchControls.java` (+ new `AnalogJoystick.java`)
+**Status**: ✅ Done
 
 ### Problem
-The current D-pad (▲▼◄► buttons) is cumbersome on a touchscreen. Players must find and press small fixed buttons. Modern mobile shooters use a floating analog joystick — touch anywhere, drag to move.
+The original D-pad (▲▼◄► buttons) was cumbersome on a touchscreen. Players had to find and press small fixed buttons. Modern mobile shooters use a floating analog joystick — touch anywhere, drag to move.
 
 ### Design
 

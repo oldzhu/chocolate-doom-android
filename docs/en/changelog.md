@@ -29,6 +29,39 @@ Complete record of all decisions, fixes, and changes made during the Chocolate D
 | **Visual** | "⚡ GOD MODE ⚡" overlay text for 2 seconds |
 | **Effect** | Invulnerability (IDDQD) + all weapons/ammo/keys (IDKFA) |
 
+### Feature 2b: God Mode — Health & Ammo Lock (2026-06-29)
+
+| Aspect | Detail |
+|--------|--------|
+| **Problem** | Initial God Mode only injected cheats once — ammo decreased when firing, health decreased from damage |
+| **Solution** | Fast periodic re-injection: IDFA every **500ms** (ammo lock), double-IDDQD every **5s** (health lock) |
+| **Implementation** | `TouchControls.java` — `scheduleAmmoRefill()` at 500ms loop, `scheduleHealthRefresh()` double-IDDQD at 5s loop, silent (no overlay spam) |
+| **Health Bug Root Cause** | DOOM's IDDQD uses XOR toggle — single re-injection turns god mode OFF instead of refreshing it |
+| **Health Fix** | Inject `iddqd` TWICE in sequence (`iddqdiddqd`): 1st toggles OFF → 2nd toggles back ON with health=100. Net: god mode stays ON, health restored. |
+| **Ammo Bug** | Original 15s refill was too slow — ammo visibly dropped between refills |
+| **Ammo Fix** | Reduced interval to 500ms; ammo restored faster than fire rate, never visibly decreases |
+| **Note** | This is cheat-code injection, not native memory locking. True zero-frame lock would require native C code modification. |
+
+### Feature 3: Context-Aware Tap Controls (2026-06-29)
+
+| Aspect | Detail |
+|--------|--------|
+| **Problem** | Too many on-screen buttons (11 total) cluttering the game viewport; Fire/Use/Enter required precise button taps |
+| **Solution** | Single tap on game area injects Ctrl+Space+Enter simultaneously — the game engine decides which key is valid in context |
+| **Design Doc** | `docs/en/controls-design.md` + `docs/zh/controls-design.md` (bilingual) |
+| **Implementation** | `TouchControls.java` — tap detection (max 250ms duration, 25px movement), `onGameTap()` injects 3 keys, auto-release 80ms |
+| **Removed Buttons** | 🔫 Fire, 🚪 Use/Open, ↵ Enter (all replaced by game-area tap) |
+| **Added Buttons** | ◀ Strafe Left (symmetric with Strafe Right) |
+| **Layout** | Simplified to 8 buttons: ☰ Menu, Y, 🗺 Map, ◀◀/▶▶ Weapons, ◀/▶ Strafe, 🏃 Run |
+| **Context Logic** | Facing enemy → fires; facing door → opens; in menu → selects item. No state tracking needed. |
+
+### God Mode Fixes — Iteration (2026-06-29)
+
+| # | Attempt | Issue | Fix |
+|---|---------|-------|-----|
+| G1 | IDDQD re-injection every 10s | XOR toggle turns god mode OFF on every other injection | Switched to `idbeholdv` (invuln artifact) every 25s |
+| G2 | `idbeholdv` every 25s | Artifact prevents damage but doesn't restore health already lost | Double-IDDQD (`iddqdiddqd`) every 5s: 1st toggles OFF, 2nd toggles ON (health=100) |
+
 ---
 
 ## v1.0 — Initial Working Port (2026-06-26)
@@ -71,6 +104,8 @@ Complete record of all decisions, fixes, and changes made during the Chocolate D
 | v5 | **Icon size increase 2**: arrows 42→56px, emojis 36→44px | 2026-06-26 |
 | v6 | **Y button fix**: added `sendText()` wrapper in `SDLActivity.java` → Y button calls `sendText("y")` instead of `onNativeKeyDown` | 2026-06-26 |
 | v7 | **Y button fix v2**: `sendText("y")` → `SDL_TEXTINPUT` (wrong event type for DOOM quit). Changed to `onNativeKeyDown(KEYCODE_Y=53)` + auto-release 80ms. Fixed keycode 54→53 (was KEYCODE_Z). | 2026-06-26 |
+| v8 | **Context-aware tap**: removed 🔫 Fire, 🚪 Use, ↵ Enter. Tap game area → Ctrl+Space+Enter. Added ◀ Strafe Left. Layout: 11→8 buttons. Design doc: `controls-design.md`. | 2026-06-29 |
+| v9 | **Button overlap fix**: recalculated all positions with minimum 10px gaps. Adjusted radii: Menu/Y 50, Map 60, Weapon 40, Strafe 45, Run 60. | 2026-06-29 |
 
 ### Key Fix: Y Button Not Quitting
 
