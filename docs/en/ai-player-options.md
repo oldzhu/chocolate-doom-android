@@ -557,6 +557,22 @@ Cloud/local VLM for occasional strategic decisions (every 5s)
 
 **Why**: Adds high-level intelligence without sacrificing real-time performance.
 
+### Phase Comparison
+
+| | v1.0 Pure RL | v1.1 BC+RL | v2.0 Hybrid DQN+VLM |
+|---|---|---|---|
+| **Time to first fun** | 1 hour | Instant | 1 hour |
+| **Skill ceiling** | High (keeps improving) | Higher (starts from human) | Highest (strategy + combat) |
+| **Offline capable** | ✅ Yes | ✅ Yes | ❌ (cloud VLM) |
+| **APK size impact** | +3.5 MB | +3.5 MB | +3.5 MB (+2GB local VLM) |
+| **Implementation effort** | ⭐⭐ Medium | ⭐⭐⭐ Moderate | ⭐⭐⭐⭐⭐ High |
+| **Battery impact** | Medium (training) | Medium (training) | Low (inference only, if cloud VLM) |
+| **Personalization** | Adapts to game | Adapts to YOU | Adapts to game + strategy |
+| **"Dumb phase"** | ❌ 30-60 min | ✅ None (starts at human level) | Depends on DQN bootstrapping |
+| **Dependencies** | None | PC for BC training (1hr) | Internet + API key (cloud VLM) |
+| **Self-evolving** | ✅ Continuously | ✅ From human baseline upward | ✅ DQN part only |
+| **Cool factor** | 🤯 "It learned by itself!" | 😎 "It plays like me!" | 🧠 "It has a brain!" |
+
 ### Phase 4: Specialization (v2.5) — Mixture of Experts
 
 ```
