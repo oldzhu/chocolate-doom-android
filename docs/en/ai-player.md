@@ -1,6 +1,8 @@
 # On-Device AI Player — Technical Specification
 
 > [中文版 (Chinese)](../zh/ai-player.md)
+>
+> **📘 See also**: [AI Player Options Deep Dive](ai-player-options.md) — full comparison of DQN, PPO, DreamerV3, VLMs, imitation learning & more.
 
 ## Problem Statement
 

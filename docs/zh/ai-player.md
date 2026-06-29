@@ -1,6 +1,8 @@
 # 端侧 AI 代打 —— 技术规格
 
 > [English version](../en/ai-player.md)
+>
+> **📘 另见**：[AI 玩家方案深度探索](ai-player-options.md) — DQN、PPO、DreamerV3、VLM、模仿学习等方案全面对比。
 
 ## 问题定义
 

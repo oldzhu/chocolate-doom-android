@@ -148,3 +148,15 @@ if (btn == btnYes) {
 | K4 | 触控控件不透明度不可由用户调节 | 待解决 |
 | K5 | 不支持多点触控同时操作（开火+移动） | 待解决 |
 | K6 | WAD 自动发现未实现（需手动推送） | 待解决 |
+
+---
+
+## F3 AI 玩家 — 设计阶段 (2026-06-29)
+
+| 方面 | 详情 |
+|--------|--------|
+| **讨论** | 手机端 RL vs PC 预训练、VLM/VLA/WAM 在实时 DOOM 中的可行性 |
+| **决策** | 阶段 1：Double Dueling DQN，纯手机端 RL。阶段 2：BC+RL 引导启动。阶段 3：混合 DQN+VLM 战略层。 |
+| **设计文档** | `docs/en/ai-player-options.md` + `docs/zh/ai-player-options.md` — 7 种方案全面对比 |
+| **排除** | DreamerV3（太大/太慢）、纯 VLM（慢 100-400 倍）、MCTS（需要世界模型）、Rainbow DQN（v1.0 过度设计） |
+| **AI 玩家规格** | `docs/en/ai-player.md` + `docs/zh/ai-player.md` 已更新交叉链接 |

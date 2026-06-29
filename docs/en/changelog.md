@@ -148,3 +148,15 @@ if (btn == btnYes) {
 | K4 | Touch controls opacity not user-adjustable | Open |
 | K5 | No multi-touch support for simultaneous actions (fire + move) | Open |
 | K6 | WAD auto-discovery not implemented (manual push required) | Open |
+
+---
+
+## F3 AI Player — Design Phase (2026-06-29)
+
+| Aspect | Detail |
+|--------|--------|
+| **Discussion** | On-device RL vs PC pre-training, VLM/VLA/WAM viability for real-time DOOM |
+| **Decision** | Phase 1: Double Dueling DQN, pure on-device RL. Phase 2: BC+RL bootstrapping. Phase 3: Hybrid DQN+VLM strategy layer. |
+| **Design Docs** | `docs/en/ai-player-options.md` + `docs/zh/ai-player-options.md` — full comparison of 7 approaches |
+| **Excluded** | DreamerV3 (too large/slow), pure VLM (100-400x too slow), MCTS (needs world model), Rainbow DQN (over-engineered for v1.0) |
+| **AI Player Spec** | `docs/en/ai-player.md` + `docs/zh/ai-player.md` updated with cross-links |
