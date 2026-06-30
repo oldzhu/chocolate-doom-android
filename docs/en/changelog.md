@@ -106,6 +106,7 @@ Complete record of all decisions, fixes, and changes made during the Chocolate D
 | v7 | **Y button fix v2**: `sendText("y")` → `SDL_TEXTINPUT` (wrong event type for DOOM quit). Changed to `onNativeKeyDown(KEYCODE_Y=53)` + auto-release 80ms. Fixed keycode 54→53 (was KEYCODE_Z). | 2026-06-26 |
 | v8 | **Context-aware tap**: removed 🔫 Fire, 🚪 Use, ↵ Enter. Tap game area → Ctrl+Space+Enter. Added ◀ Strafe Left. Layout: 11→8 buttons. Design doc: `controls-design.md`. | 2026-06-29 |
 | v9 | **Button overlap fix**: recalculated all positions with minimum 10px gaps. Adjusted radii: Menu/Y 50, Map 60, Weapon 40, Strafe 45, Run 60. | 2026-06-29 |
+| v10 | **AI toggle button**: added 🤖 button (top bar, r=45). Green when active, dim when off. Wired to AIController for DQN agent control. | 2026-06-30 |
 
 ### Key Fix: Y Button Not Quitting
 
@@ -160,3 +161,27 @@ if (btn == btnYes) {
 | **Design Docs** | `docs/en/ai-player-options.md` + `docs/zh/ai-player-options.md` — full comparison of 7 approaches |
 | **Excluded** | DreamerV3 (too large/slow), pure VLM (100-400x too slow), MCTS (needs world model), Rainbow DQN (over-engineered for v1.0) |
 | **AI Player Spec** | `docs/en/ai-player.md` + `docs/zh/ai-player.md` updated with cross-links |
+
+---
+
+## F3 AI Player — v1.0 Implementation (2026-06-30)
+
+| Aspect | Detail |
+|--------|--------|
+| **Architecture** | Pure-Java DQN: FC(13→128→64→14), double Q-learning, replay buffer 10K |
+| **Files Created** | `ai/NeuralNet.java` (270 lines), `ai/DQNPlayer.java` (265 lines), `ai/AIController.java` (292 lines) |
+| **State Features** | v1.0: heuristic (time alive, recent actions). v1.1: JNI game state extraction planned. |
+| **Actions** | 14 discrete: NOOP, FWD, BACK, LEFT, RIGHT, STRAFEL, STRAFER, FIRE, USE, RUN, FIST, PISTOL, SHOTGUN, BFG |
+| **Training** | On-device RL: 8.75 Hz (frame-skip=4), batch=32, γ=0.99, ε=1.0→0.05 |
+| **Toggle** | 🤖 button (top bar, green when active). Toggles between human and AI play. |
+| **Model Size** | ~50 KB (~10K params), 0 MB APK impact (pure Java) |
+| **Frame Capture** | Not yet — state is heuristic. JNI glReadPixels planned for v1.1. |
+
+### Cheat Injection Fix — Queue Serialization (2026-06-30)
+
+| Aspect | Detail |
+|--------|--------|
+| **Bug** | IDFA (500ms) and double-IDDQD (5s) injected characters via the same Handler. When overlapping, characters interleaved (e.g. "i i d d f d a q"), garbling cheat input. DOOM's cheat detector matched nothing. |
+| **Symptom** | Health not restoring in god mode. Ammo sometimes not refilling. |
+| **Fix** | Queue-based injection (`cheatQueue` LinkedList). Only one cheat sequence processes at a time. 50ms key hold, 100ms gap between sequences. |
+| **Result** | No interleaving possible. Cheat sequences always reach DOOM intact. |
