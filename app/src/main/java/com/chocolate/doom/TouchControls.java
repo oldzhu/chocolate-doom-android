@@ -458,20 +458,53 @@ public class TouchControls extends View {
         }, 5000);  // every 5 seconds
     }
 
-    private void injectCheatSequence(String sequence) {
-        for (int i = 0; i < sequence.length(); i++) {
-            final char c = sequence.charAt(i);
-            final int keyCode = charToKeyCode(c);
-            if (keyCode < 0) continue;
+    // Cheat injection system — queued to prevent character interleaving
+    // When IDFA (500ms) and IDDQD (5s) run simultaneously, their characters
+    // interleave in the Handler queue, garbling cheat input. This queue
+    // serializes injections: only one sequence at a time.
+    private final java.util.Queue<String> cheatQueue = new java.util.LinkedList<>();
+    private boolean injectingCheat = false;
 
-            final long delay = i * 65L;
-            handler.postDelayed(() -> {
-                SDLActivity.onNativeKeyDown(keyCode);
-                handler.postDelayed(() -> {
-                    SDLActivity.onNativeKeyUp(keyCode);
-                }, 50);
-            }, delay);
+    /**
+     * Queue a cheat sequence for injection. If no injection is in progress,
+     * starts immediately. Otherwise, waits for the current sequence to finish.
+     */
+    private void injectCheatSequence(String sequence) {
+        cheatQueue.add(sequence);
+        if (!injectingCheat) {
+            processCheatQueue();
         }
+    }
+
+    private void processCheatQueue() {
+        String seq = cheatQueue.poll();
+        if (seq == null) {
+            injectingCheat = false;
+            return;
+        }
+        injectingCheat = true;
+        injectOneChar(seq, 0);
+    }
+
+    private void injectOneChar(String seq, int index) {
+        if (index >= seq.length()) {
+            // Sequence complete — 100ms gap then next in queue
+            handler.postDelayed(this::processCheatQueue, 100);
+            return;
+        }
+        char c = seq.charAt(index);
+        int keyCode = charToKeyCode(c);
+        if (keyCode < 0) {
+            injectOneChar(seq, index + 1);
+            return;
+        }
+        // Press key
+        SDLActivity.onNativeKeyDown(keyCode);
+        // Release after 50ms, then next character
+        handler.postDelayed(() -> {
+            SDLActivity.onNativeKeyUp(keyCode);
+            injectOneChar(seq, index + 1);
+        }, 50);
     }
 
     private void showOverlay(String text, long durationMs) {
