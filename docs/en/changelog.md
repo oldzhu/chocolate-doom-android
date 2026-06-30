@@ -193,8 +193,9 @@ if (btn == btnYes) {
 | **Symptom** | God Mode (triple-tap ☰) has no effect on Nightmare difficulty — health decreases, ammo depletes, no weapons granted |
 | **Root Cause** | Chocolate Doom `st_stuff.c:393`: `if (!netgame && gameskill != sk_nightmare)` — ALL cheat codes blocked on Nightmare. Vanilla DOOM behavior faithfully reproduced. |
 | **Why Java can't fix it** | `TouchControls.java` injects keyboard events correctly, but `ST_Responder` (native C) refuses to process them on Nightmare |
-| **Chosen Solution** | **Source patch**: remove `gameskill != sk_nightmare` from `st_stuff.c`, rebuild `libdoom.so` via `build-native.sh` |
-| **Reason for source patch** | `libdoom.so` is built from local source (`~/android-toolchain/chocolate-doom-src/`), not a prebuilt blob. Source patch is permanent across rebuilds. |
+| **Chosen Solution** | **Source patch**: remove `gameskill != sk_nightmare` from `st_stuff.c`, change `^= CF_GODMODE` (XOR toggle) to `|= CF_GODMODE` (always SET). Rebuild `libdoom.so` via `build-native.sh`. |
+| **Reason for source patch** | `libdoom.so` is built from the git submodule at `native/chocolate-doom/`. Source patch is permanent across rebuilds. |
+| **XOR toggle fix** | Original `^=` flips god mode ON↔OFF each injection. Changed to `|=` so IDDQD always enables god mode — no vulnerability window, no death possible. |
 | **Full Analysis** | `docs/en/nightmare-godmode.md` + `docs/zh/nightmare-godmode.md` |
 
 ---

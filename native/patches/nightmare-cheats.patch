@@ -1,6 +1,8 @@
+diff --git a/src/doom/st_stuff.c b/src/doom/st_stuff.c
+index da9b8bc..164f3dc 100644
 --- a/src/doom/st_stuff.c
 +++ b/src/doom/st_stuff.c
-@@ -390,7 +390,7 @@ void ST_Responder (event_t* ev)
+@@ -390,12 +390,12 @@ ST_Responder (event_t* ev)
    // if a user keypress...
    else if (ev->type == ev_keydown)
    {
@@ -9,3 +11,9 @@
      {
        // 'dqd' cheat for toggleable god mode
        if (cht_CheckCheat(&cheat_god, ev->data2))
+       {
+-	plyr->cheats ^= CF_GODMODE;
++	plyr->cheats |= CF_GODMODE;
+ 	if (plyr->cheats & CF_GODMODE)
+ 	{
+ 	  if (plyr->mo)

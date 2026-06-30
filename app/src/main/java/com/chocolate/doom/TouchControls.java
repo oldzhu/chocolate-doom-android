@@ -443,23 +443,19 @@ public class TouchControls extends View {
     }
 
     /**
-     * Restore health to 100% every 5 seconds via double-IDDQD toggle.
+     * Restore health to 100% every 3 seconds (native |= ensures god mode never toggles off).
      *
-     * DOOM's IDDQD cheat uses XOR (bit-flip) — a single injection TOGGLES
-     * god mode ON↔OFF. To work around this, we inject it TWICE in sequence:
-     *   "iddqdiddqd" → 1st toggles OFF, 2nd toggles back ON (health=100)
-     * Net effect: god mode stays ON, health restored to max.
-     *
-     * The double sequence takes ~650ms (10 chars × 65ms). Running every 5s
-     * gives plenty of time between cycles.
+     * Native fix: st_stuff.c uses |= (always SET) instead of ^= (XOR toggle).
+     * Once IDDQD activates CF_GODMODE, the player is permanently invulnerable.
+     * This refresh just ensures health stays at 100 — no vulnerability window.
      */
     private void scheduleHealthRefresh() {
         handler.postDelayed(() -> {
             if (ammoRefillActive) {
-                injectCheatSequence("iddqdiddqd");  // toggle OFF→ON, health=100
+                injectCheatSequence("iddqd");  // always sets ON (|= in native), health=100
                 scheduleHealthRefresh();
             }
-        }, 5000);  // every 5 seconds
+        }, 3000);  // every 3 seconds
     }
 
     // Cheat injection system — queued to prevent character interleaving

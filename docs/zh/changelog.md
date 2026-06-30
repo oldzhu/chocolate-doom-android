@@ -193,8 +193,9 @@ if (btn == btnYes) {
 | **症状** | 噩梦（Nightmare）难度下，上帝模式（连按三下 ☰）无效 — 生命值减少、弹药消耗、武器未授予 |
 | **根因** | Chocolate Doom `st_stuff.c:393`：`if (!netgame && gameskill != sk_nightmare)` — 噩梦难度下**所有作弊码**被阻止。这是原版 DOOM 行为，被 Chocolate Doom 忠实复现。 |
 | **为何 Java 无法修复** | `TouchControls.java` 正确注入键盘事件，但 `ST_Responder`（原生 C 代码）在噩梦难度下拒绝处理 |
-| **采用方案** | **源码补丁**：从 `st_stuff.c` 移除 `gameskill != sk_nightmare`，通过 `build-native.sh` 重新构建 `libdoom.so` |
-| **选择源码补丁的原因** | `libdoom.so` 是从本地源码（`~/android-toolchain/chocolate-doom-src/`）构建的，而非预编译 blob。源码补丁在重新构建时持久有效。 |
+| **采用方案** | **源码补丁**：从 `st_stuff.c` 移除 `gameskill != sk_nightmare`，将 `^= CF_GODMODE`（XOR 切换）改为 `|= CF_GODMODE`（始终 SET）。通过 `build-native.sh` 重新构建 `libdoom.so`。 |
+| **选择源码补丁的原因** | `libdoom.so` 是从 `native/chocolate-doom/` 的 git 子模块构建的。源码补丁在重新构建时持久有效。 |
+| **XOR 切换修复** | 原始 `^=` 每次注入会在开↔关之间切换上帝模式。改为 `|=` 确保 IDDQD 始终开启上帝模式 — 无脆弱窗口，不可能死亡。 |
 | **完整分析** | `docs/en/nightmare-godmode.md` + `docs/zh/nightmare-godmode.md` |
 
 ---
