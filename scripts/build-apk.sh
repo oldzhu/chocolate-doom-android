@@ -141,6 +141,11 @@ mkdir -p "$BUILD_DIR/apk/lib/arm64-v8a"
 NATIVE_LIB="$HOME/android-toolchain/apk/jniLibs/arm64-v8a/lib${GAME}.so"
 if [ -f "$NATIVE_LIB" ]; then
     cp "$NATIVE_LIB" "$BUILD_DIR/apk/lib/arm64-v8a/libmain.so"
+    # Bundle C++ runtime (needed by SDL2)
+    CXX_LIB="$HOME/android-toolchain/apk/jniLibs/arm64-v8a/libc++_shared.so"
+    if [ -f "$CXX_LIB" ]; then
+        cp "$CXX_LIB" "$BUILD_DIR/apk/lib/arm64-v8a/"
+    fi
 else
     echo "⚠️  No native lib found at $NATIVE_LIB — APK will have no native code!"
     echo "   Run scripts/build-native.sh first."

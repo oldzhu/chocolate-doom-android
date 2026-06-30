@@ -105,7 +105,7 @@ for GAME in $GAMES; do
     mkdir -p "$GAME_DIR"
     cd "$GAME_DIR"
 
-    "$CC" -shared -fPIC -o "lib${GAME}.so" \
+    "$CXX" -shared -fPIC -o "lib${GAME}.so" \
         -Wl,--whole-archive \
         "$CHOCO_BUILD/src/$GAME"/*.a \
         "$CHOCO_BUILD/textscreen"/*.a \
@@ -124,6 +124,13 @@ for GAME in $GAMES; do
     mkdir -p "$TOOLCHAIN/apk/jniLibs/arm64-v8a"
     cp "lib${GAME}.so" "$TOOLCHAIN/apk/jniLibs/arm64-v8a/"
 done
+
+# Copy C++ runtime (needed by SDL2)
+CXX_SHARED="$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so"
+if [ -f "$CXX_SHARED" ]; then
+    cp "$CXX_SHARED" "$TOOLCHAIN/apk/jniLibs/arm64-v8a/"
+    echo "   ✓ libc++_shared.so copied"
+fi
 
 echo ""
 echo "=== ✅ Native build complete ==="
