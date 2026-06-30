@@ -10,7 +10,7 @@
 | Android SDK | 34.0.0 | `~/android-toolchain/SDK/` |
 | JDK | 17 | `~/android-toolchain/jdk17/` |
 | Chocolate Doom | 3.1.1 | `native/chocolate-doom/` (git submodule) |
-| SDL2 | 2.30.0 | `~/android-toolchain/SDL2-src/` |
+| SDL2 | 2.30.0 | `~/android-toolchain/SDL2-android/` (prebuilt for Android) |
 | SDL2_mixer | 2.6.3 | `~/android-toolchain/SDL2_mixer-2.6.3/` |
 
 ### Install NDK & SDK
