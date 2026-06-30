@@ -4,8 +4,11 @@ import org.libsdl.app.SDLActivity;
 import android.util.Log;
 import android.view.ViewGroup;
 
+import com.chocolate.doom.ai.AIController;
+
 public class ChocolateDoom extends SDLActivity {
     private TouchControls touchControls;
+    private AIController aiController;
 
     @Override
     protected String[] getLibraries() {
@@ -38,6 +41,11 @@ public class ChocolateDoom extends SDLActivity {
                 ));
                 touchControls.bringToFront();
                 Log.v("ChocolateDoom", "Touch controls added to layout");
+
+                // Create AI controller and wire to touch controls
+                aiController = new AIController();
+                TouchControls.setAIController(aiController);
+                Log.v("ChocolateDoom", "AI controller initialized");
             } else {
                 Log.w("ChocolateDoom", "mLayout is null, retrying...");
                 // Retry once more
@@ -65,5 +73,13 @@ public class ChocolateDoom extends SDLActivity {
     @Override
     public void setOrientationBis(int w, int h, boolean resizable, String hint) {
         Log.v("SDL", "setOrientationBis() SKIPPED to avoid surface destroy");
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (aiController != null) {
+            aiController.disable();
+        }
+        super.onDestroy();
     }
 }

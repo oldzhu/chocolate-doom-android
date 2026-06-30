@@ -7,6 +7,8 @@ import android.view.View;
 import org.libsdl.app.SDLActivity;
 import android.os.Handler;
 
+import com.chocolate.doom.ai.AIController;
+
 /**
  * Virtual touch controls overlay for Chocolate Doom on Android.
  *
@@ -32,9 +34,16 @@ public class TouchControls extends View {
         boolean pressed;
         int pointerId = -1;
     }
-    private ActionButton btnRun, btnMap, btnStrafeL, btnStrafeR, btnMenu, btnYes;
+    private ActionButton btnRun, btnMap, btnStrafeL, btnStrafeR, btnMenu, btnYes, btnAI;
     private ActionButton btnWeapPrev, btnWeapNext;
     private ActionButton[] allButtons;
+
+    // AI Controller reference (set by ChocolateDoom)
+    private static AIController aiController;
+
+    public static void setAIController(AIController ai) {
+        aiController = ai;
+    }
 
     // ── Game-area tap detection ──
     // When a pointer goes down on the game area (not claimed by joystick/buttons),
@@ -96,10 +105,11 @@ public class TouchControls extends View {
         btnStrafeR = newButton("\u25B6", 22);   // DPAD_RIGHT = strafe right
         btnMenu    = newButton("\u2630", 111);  // ESCAPE = menu
         btnYes     = newButton("Y",    53);     // KEYCODE_Y = confirm/yes/quit
+        btnAI      = newButton("\uD83E\uDD16", -1); // AI toggle (no keycode)
         btnWeapPrev = newButton("\u25C0\u25C0", 8);
         btnWeapNext = newButton("\u25B6\u25B6", 9);
 
-        allButtons = new ActionButton[]{btnRun, btnMap, btnStrafeL, btnStrafeR, btnMenu, btnYes, btnWeapPrev, btnWeapNext};
+        allButtons = new ActionButton[]{btnRun, btnMap, btnStrafeL, btnStrafeR, btnMenu, btnYes, btnAI, btnWeapPrev, btnWeapNext};
     }
 
     private ActionButton newButton(String label, int keyCode) {
@@ -119,7 +129,7 @@ public class TouchControls extends View {
         float bottomY = h - 30;
 
         // ── Right-column layout (top → bottom, minimum 10px gap between buttons) ──
-        // Row 1: Menu + Y (r=50, gap=20px between edges)
+        // Row 1: Menu + Y + AI (r=50, gap=20px between edges)
         btnMenu.cx = rightEdge - 80;
         btnMenu.cy = 120;
         btnMenu.radius = 50f;
@@ -127,6 +137,10 @@ public class TouchControls extends View {
         btnYes.cx = rightEdge - 200;
         btnYes.cy = 120;
         btnYes.radius = 50f;
+
+        btnAI.cx = rightEdge - 320;
+        btnAI.cy = 120;
+        btnAI.radius = 45f;
 
         // Row 2: Map (r=60, 10px below Y)
         btnMap.cx = rightEdge - 140;
@@ -189,7 +203,15 @@ public class TouchControls extends View {
     }
 
     private void drawActionButton(Canvas canvas, ActionButton btn) {
-        paint.setColor(btn.pressed ? Color.argb(180, 255, 200, 100) : Color.argb(100, 200, 200, 200));
+        // AI button: green when active, dim when off
+        if (btn == btnAI) {
+            boolean aiOn = (aiController != null && aiController.isEnabled());
+            paint.setColor(aiOn ? Color.argb(180, 50, 220, 50)   // green = active
+                                : Color.argb(100, 200, 200, 200)); // dim = off
+        } else {
+            paint.setColor(btn.pressed ? Color.argb(180, 255, 200, 100)
+                                       : Color.argb(100, 200, 200, 200));
+        }
         canvas.drawCircle(btn.cx, btn.cy, btn.radius, paint);
         textPaint.setTextSize(44f);
         canvas.drawText(btn.label, btn.cx, btn.cy + 15, textPaint);
@@ -251,6 +273,16 @@ public class TouchControls extends View {
                                     SDLActivity.onNativeKeyUp(fb.keyCode);
                                 }
                             }, 80);
+                        } else if (btn == btnAI) {
+                            // AI toggle: tap → toggle AI on/off
+                            final ActionButton fb = btn;
+                            handler.postDelayed(() -> {
+                                fb.pressed = false;
+                                fb.pointerId = -1;
+                            }, 80);
+                            if (aiController != null) {
+                                aiController.toggle();
+                            }
                         } else if (btn == btnWeapPrev || btn == btnWeapNext) {
                             if (btn == btnWeapPrev) {
                                 currentWeaponSlot = (currentWeaponSlot == 1) ? 7 : currentWeaponSlot - 1;
