@@ -29,6 +29,10 @@ public class AnalogJoystick {
     // Previous keystate for differential updates
     private boolean prevUp, prevDown, prevLeft, prevRight, prevRun;
 
+    // Suppression — briefly disable joystick after context tap
+    // to prevent arrow keys from interfering with menu selection.
+    private long suppressUntil = 0;
+
     // Painting
     private final Paint outerPaint;
     private final Paint innerPaint;
@@ -79,9 +83,11 @@ public class AnalogJoystick {
 
     /**
      * Handle touch move — update knob position and send key events.
+     * Skipped during suppression window (after context tap).
      */
     public void onTouchMove(float x, float y) {
         if (!active) return;
+        if (System.currentTimeMillis() < suppressUntil) return;  // suppressed
 
         float dx = x - originX;
         float dy = y - originY;
@@ -134,6 +140,15 @@ public class AnalogJoystick {
         releaseAll();
         active = false;
         pointerId = -1;
+    }
+
+    /**
+     * Briefly suppress joystick input (e.g. after context tap to prevent
+     * arrow keys from overriding menu selection).
+     */
+    public void suppress(long durationMs) {
+        suppressUntil = System.currentTimeMillis() + durationMs;
+        releaseAll();  // immediately release any held keys
     }
 
     /**

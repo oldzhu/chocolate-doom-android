@@ -1,0 +1,3 @@
+[submodule "native/chocolate-doom"]
+	path = native/chocolate-doom
+	url = https://github.com/chocolate-doom/chocolate-doom

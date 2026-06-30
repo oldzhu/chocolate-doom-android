@@ -185,3 +185,14 @@ if (btn == btnYes) {
 | **症状** | 上帝模式生命值不恢复。弹药偶尔不补充。 |
 | **修复** | 队列注入（`cheatQueue` LinkedList）。同一时间仅处理一个作弊码序列。50ms 按键保持，序列间 100ms 间隔。 |
 | **结果** | 不再可能交错。作弊码序列始终完整到达 DOOM。 |
+
+### 噩梦难度上帝模式被禁用 — 根因与修复 (2026-06-30)
+
+| 方面 | 详情 |
+|--------|--------|
+| **症状** | 噩梦（Nightmare）难度下，上帝模式（连按三下 ☰）无效 — 生命值减少、弹药消耗、武器未授予 |
+| **根因** | Chocolate Doom `st_stuff.c:393`：`if (!netgame && gameskill != sk_nightmare)` — 噩梦难度下**所有作弊码**被阻止。这是原版 DOOM 行为，被 Chocolate Doom 忠实复现。 |
+| **为何 Java 无法修复** | `TouchControls.java` 正确注入键盘事件，但 `ST_Responder`（原生 C 代码）在噩梦难度下拒绝处理 |
+| **采用方案** | **源码补丁**：从 `st_stuff.c` 移除 `gameskill != sk_nightmare`，通过 `build-native.sh` 重新构建 `libdoom.so` |
+| **选择源码补丁的原因** | `libdoom.so` 是从本地源码（`~/android-toolchain/chocolate-doom-src/`）构建的，而非预编译 blob。源码补丁在重新构建时持久有效。 |
+| **完整分析** | `docs/en/nightmare-godmode.md` + `docs/zh/nightmare-godmode.md` |

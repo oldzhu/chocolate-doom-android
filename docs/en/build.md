@@ -9,7 +9,7 @@
 | Android NDK | r27 | `~/android-toolchain/ndk/` |
 | Android SDK | 34.0.0 | `~/android-toolchain/SDK/` |
 | JDK | 17 | `~/android-toolchain/jdk17/` |
-| Chocolate Doom | 3.1.1 | `~/android-toolchain/chocolate-doom-src/` |
+| Chocolate Doom | 3.1.1 | `native/chocolate-doom/` (git submodule) |
 | SDL2 | 2.30.0 | `~/android-toolchain/SDL2-src/` |
 | SDL2_mixer | 2.6.3 | `~/android-toolchain/SDL2_mixer-2.6.3/` |
 
@@ -30,9 +30,10 @@ sdkmanager "platforms;android-34" "build-tools;34.0.0" "platform-tools"
 ```bash
 cd ~/android-toolchain
 
-# Chocolate Doom
-git clone https://github.com/chocolate-doom/chocolate-doom.git chocolate-doom-src
-cd chocolate-doom-src && git checkout chocolate-doom-3.1.1 && cd ..
+# Chocolate Doom — managed as git submodule in our repo
+# (no manual clone needed — build-native.sh uses native/chocolate-doom/)
+cd chocolate-doom-android
+git submodule update --init    # pulls chocolate-doom into native/chocolate-doom/
 
 # SDL2
 git clone https://github.com/libsdl-org/SDL.git SDL2-src

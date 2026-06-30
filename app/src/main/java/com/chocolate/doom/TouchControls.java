@@ -374,6 +374,10 @@ public class TouchControls extends View {
      *   - In menu       → selects menu item
      */
     private void onGameTap() {
+        // Suppress joystick briefly so arrow keys don't override
+        // the Enter/select in menus (e.g. episode/skill selection)
+        joystick.suppress(250);
+
         // Press all three keys
         for (int keyCode : CONTEXT_TAP_KEYS) {
             SDLActivity.onNativeKeyDown(keyCode);

@@ -185,3 +185,14 @@ if (btn == btnYes) {
 | **Symptom** | Health not restoring in god mode. Ammo sometimes not refilling. |
 | **Fix** | Queue-based injection (`cheatQueue` LinkedList). Only one cheat sequence processes at a time. 50ms key hold, 100ms gap between sequences. |
 | **Result** | No interleaving possible. Cheat sequences always reach DOOM intact. |
+
+### Nightmare God Mode Blocker — Root Cause & Fix (2026-06-30)
+
+| Aspect | Detail |
+|--------|--------|
+| **Symptom** | God Mode (triple-tap ☰) has no effect on Nightmare difficulty — health decreases, ammo depletes, no weapons granted |
+| **Root Cause** | Chocolate Doom `st_stuff.c:393`: `if (!netgame && gameskill != sk_nightmare)` — ALL cheat codes blocked on Nightmare. Vanilla DOOM behavior faithfully reproduced. |
+| **Why Java can't fix it** | `TouchControls.java` injects keyboard events correctly, but `ST_Responder` (native C) refuses to process them on Nightmare |
+| **Chosen Solution** | **Source patch**: remove `gameskill != sk_nightmare` from `st_stuff.c`, rebuild `libdoom.so` via `build-native.sh` |
+| **Reason for source patch** | `libdoom.so` is built from local source (`~/android-toolchain/chocolate-doom-src/`), not a prebuilt blob. Source patch is permanent across rebuilds. |
+| **Full Analysis** | `docs/en/nightmare-godmode.md` + `docs/zh/nightmare-godmode.md` |
