@@ -83,9 +83,19 @@ cmake "$CHOCO_SRC" \
     2>&1 | tail -3
 
 # Build only the static library targets (skip executables like chocolate-server)
-echo "   Compiling..."
+echo "   Compiling static libs..."
 make textscreen opl pcsound doom heretic hexen strife setup -j$(nproc) 2>&1 | tail -5
 echo "   ✓ All static libs built"
+
+# Build chocolate-doom target to compile common sources (i_video.c, i_input.c, etc.)
+# These are compiled as part of the executable, not the static libs.
+# The link step fails (no main() on Android), but we only need the .o files.
+echo "   Compiling common sources (chocolate-doom target)..."
+make chocolate-doom -j$(nproc) 2>&1 | tail -3 || true
+echo "   ✓ Common sources compiled"
+
+# Common object directory (where chocolate-doom's .o files end up)
+COMMON_OBJ_DIR="$CHOCO_BUILD/src/CMakeFiles/chocolate-doom.dir"
 
 # ── Link game .so files ──
 echo "=== Linking game shared libraries ==="
@@ -102,6 +112,7 @@ for GAME in $GAMES; do
         "$CHOCO_BUILD/opl"/*.a \
         "$CHOCO_BUILD/pcsound"/*.a \
         -Wl,--no-whole-archive \
+        "$COMMON_OBJ_DIR"/*.c.o \
         "$SDL2_LIB" \
         "$SDL2_MIXER_LIB" \
         -lm -ldl -lOpenSLES \
