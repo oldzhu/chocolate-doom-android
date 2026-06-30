@@ -115,7 +115,7 @@ for GAME in $GAMES; do
         "$COMMON_OBJ_DIR"/*.c.o \
         "$SDL2_LIB" \
         "$SDL2_MIXER_LIB" \
-        -lm -ldl -lOpenSLES -lGLESv1_CM -lGLESv2 \
+        -lm -ldl -llog -lOpenSLES -lGLESv1_CM -lGLESv2 -landroid \
         2>&1 | tail -2
 
     echo "     → lib${GAME}.so built ($(du -h lib${GAME}.so | cut -f1))"
