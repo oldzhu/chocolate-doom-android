@@ -196,3 +196,78 @@ if (btn == btnYes) {
 | **Chosen Solution** | **Source patch**: remove `gameskill != sk_nightmare` from `st_stuff.c`, rebuild `libdoom.so` via `build-native.sh` |
 | **Reason for source patch** | `libdoom.so` is built from local source (`~/android-toolchain/chocolate-doom-src/`), not a prebuilt blob. Source patch is permanent across rebuilds. |
 | **Full Analysis** | `docs/en/nightmare-godmode.md` + `docs/zh/nightmare-godmode.md` |
+
+---
+
+## Chocolate Doom Submodule + Build System Migration (2026-06-30)
+
+### Git Submodule Decision
+
+| Aspect | Detail |
+|--------|--------|
+| **Why submodule** | Keeps repo lightweight, clear upstream provenance at exact tag `chocolate-doom-3.1.1`, reproducible builds |
+| **Submodule path** | `native/chocolate-doom/` (pinned to upstream tag `chocolate-doom-3.1.1`) |
+| **Patches** | Version-controlled at `native/patches/nightmare-cheats.patch` |
+| **Auto-apply** | `build-native.sh` runs `git apply` on all `.patch` files before cmake |
+| **Commit** | `29c9e92` — submodule + patches + decision docs (EN+ZH) |
+
+### Build System Changes
+
+| # | Change | Reason | Commit |
+|---|--------|--------|--------|
+| BS1 | cmake now configures from submodule (`native/chocolate-doom/`) | Eliminates external source dependency | `29c9e92` |
+| BS2 | Use Android SDK's bundled cmake (`$SDK/cmake/3.22.1/bin`) | Ensures compatible cmake version | `4fddc94` |
+| BS3 | Use prebuilt SDL2/SDL2_mixer from `SDL2-android/` | Avoids slow autotools configure (SDL2_mixer's `sdl2-config` not compatible with Android cross-compile) | `4fddc94` |
+| BS4 | Compile `chocolate-doom` executable target for common `.o` files | Common sources (`i_video.c`, `i_input.c`, etc.) are in the executable target, not static libs | `e8cd299` |
+| BS5 | Switch linker from `clang` to `clang++` | SDL2 static lib contains C++ code needing C++ ABI symbols | `2939cd6` |
+| BS6 | Bundle `libc++_shared.so` in APK | Required at runtime by SDL2's C++ code | `2939cd6` |
+
+---
+
+## libdoom.so Linker Fixes — dlopen Symbol Resolution (2026-06-30)
+
+After migrating to git submodule and full cmake rebuild, five sequential `dlopen failed: cannot locate symbol` errors were encountered and fixed. Each error prevented the app from launching on the device.
+
+### Complete Fix Log
+
+| # | Missing Symbol | Root Cause | Fix | Commit |
+|---|---------------|------------|-----|--------|
+| L1 | `I_VideoBuffer` | Common sources (`i_video.c`, `i_input.c`, `i_timer.c`, etc.) compiled only into `chocolate-doom` executable target, not into static libs | Compile `chocolate-doom` target (ignore link failure — only need `.o` files), link `CMakeFiles/chocolate-doom.dir/src/*.c.o` into `libdoom.so` | `e8cd299` |
+| L2 | `glBindTexture` + 50+ GLES symbols | Chocolate Doom uses both OpenGL ES 1.x and 2.0 but neither library was linked | Add `-lGLESv1_CM -lGLESv2` to linker flags | `e8cd299` |
+| L3 | `_gxx_personality_v0` | C++ exception handling ABI symbol not resolved. SDL2 static lib compiled with C++ code; `clang` (C linker) doesn't pull in C++ runtime | Switch linker to `clang++` (`$CXX`), add `-lc++_shared` (implicit with C++ linker), bundle `libc++_shared.so` in APK | `2939cd6` |
+| L4 | `__android_log_write` | Android logging library not linked; `-llog` was present in earlier linker line but dropped when switching to `$CXX` | Add `-llog` back to linker flags | `9331bcd` |
+| L5 | `ANativeWindow_setBuffersGeometry` | Android NativeWindow API not linked; SDL2 video backend calls this function | Add `-landroid` to linker flags | `9331bcd` |
+
+### Final Linker Invocation
+
+```bash
+$CXX -shared -fPIC -o libdoom.so \
+    -Wl,--whole-archive libdoom.a libtextscreen.a \
+    libopl.a libpcsound.a -Wl,--no-whole-archive \
+    $COMMON_OBJ_DIR/*.c.o \
+    $SDL2_LIB $SDL2_MIXER_LIB \
+    -lm -ldl -llog -lOpenSLES -lGLESv1_CM -lGLESv2 -landroid
+```
+
+### Verification
+
+```bash
+# Check NEEDED libraries
+readelf -d libdoom.so | grep NEEDED
+# Output: libm.so, libdl.so, liblog.so, libOpenSLES.so,
+#         libGLESv1_CM.so, libGLESv2.so, libc++_shared.so, libc.so
+
+# Confirm no undefined symbols
+nm -D libdoom.so | grep -E "I_VideoBuffer|glBindTexture|_gxx_personality|__android_log_write|ANativeWindow_setBuffersGeometry"
+# All resolved ✓
+```
+
+### Lessons Learned
+
+1. **Common sources in executables, not libs**: Chocolate Doom's cmake puts shared sources (`i_*.c`, `m_*.c`) into the `chocolate-doom` executable target, not into `libdoom.a`. We compile the executable target for `.o` files only (link step fails — no `main()` on Android — but that's fine).
+
+2. **GLES v1 + v2 both needed**: Chocolate Doom uses GLES 1.x for 2D screen rendering and GLES 2.0 for scaling/shaders. Both must be linked.
+
+3. **C++ ABI from SDL2**: Even if your code is pure C, linking a static lib with C++ code requires `clang++` as the linker. Missing C++ ABI symbols (`_gxx_personality_v0`, `__cxa_*`) are the #1 symptom.
+
+4. **Android system libs**: `-llog` (logging), `-landroid` (NativeWindow), `-lOpenSLES` (audio) are frequently needed when linking SDL2 for Android but easy to overlook.

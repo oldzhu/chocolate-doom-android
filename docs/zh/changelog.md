@@ -196,3 +196,78 @@ if (btn == btnYes) {
 | **采用方案** | **源码补丁**：从 `st_stuff.c` 移除 `gameskill != sk_nightmare`，通过 `build-native.sh` 重新构建 `libdoom.so` |
 | **选择源码补丁的原因** | `libdoom.so` 是从本地源码（`~/android-toolchain/chocolate-doom-src/`）构建的，而非预编译 blob。源码补丁在重新构建时持久有效。 |
 | **完整分析** | `docs/en/nightmare-godmode.md` + `docs/zh/nightmare-godmode.md` |
+
+---
+
+## Chocolate Doom 子模块 + 构建系统迁移 (2026-06-30)
+
+### Git 子模块决策
+
+| 方面 | 详情 |
+|--------|--------|
+| **为何使用子模块** | 保持仓库轻量，明确的上游溯源（精确标签 `chocolate-doom-3.1.1`），可复现构建 |
+| **子模块路径** | `native/chocolate-doom/`（固定到上游标签 `chocolate-doom-3.1.1`） |
+| **补丁** | 版本控制在 `native/patches/nightmare-cheats.patch` |
+| **自动应用** | `build-native.sh` 在执行 cmake 前对全部 `.patch` 文件运行 `git apply` |
+| **提交** | `29c9e92` — 子模块 + 补丁 + 决策文档（中英文） |
+
+### 构建系统变更
+
+| # | 变更 | 原因 | 提交 |
+|---|--------|--------|--------|
+| BS1 | cmake 现在从子模块配置（`native/chocolate-doom/`） | 消除外部源码依赖 | `29c9e92` |
+| BS2 | 使用 Android SDK 自带的 cmake（`$SDK/cmake/3.22.1/bin`） | 确保兼容的 cmake 版本 | `4fddc94` |
+| BS3 | 使用 `SDL2-android/` 的预编译 SDL2/SDL2_mixer | 避免慢速 autotools configure（SDL2_mixer 的 `sdl2-config` 与 Android 交叉编译不兼容） | `4fddc94` |
+| BS4 | 编译 `chocolate-doom` 可执行目标以获取公共 `.o` 文件 | 公共源码（`i_video.c`、`i_input.c` 等）在可执行目标中，不在静态库中 | `e8cd299` |
+| BS5 | 链接器从 `clang` 切换到 `clang++` | SDL2 静态库包含需要 C++ ABI 符号的 C++ 代码 | `2939cd6` |
+| BS6 | 在 APK 中打包 `libc++_shared.so` | SDL2 的 C++ 代码运行时需要 | `2939cd6` |
+
+---
+
+## libdoom.so 链接修复 — dlopen 符号解析 (2026-06-30)
+
+迁移到 git 子模块并进行完整的 cmake 重新构建后，遇到了五个连续的 `dlopen failed: cannot locate symbol` 错误并逐一修复。每个错误都阻止了应用在设备上启动。
+
+### 完整修复日志
+
+| # | 缺失符号 | 根因 | 修复 | 提交 |
+|---|---------------|------------|-----|--------|
+| L1 | `I_VideoBuffer` | 公共源码（`i_video.c`、`i_input.c`、`i_timer.c` 等）只编译进了 `chocolate-doom` 可执行目标，不在静态库中 | 编译 `chocolate-doom` 目标（忽略链接失败 — 只需要 `.o` 文件），将 `CMakeFiles/chocolate-doom.dir/src/*.c.o` 链接进 `libdoom.so` | `e8cd299` |
+| L2 | `glBindTexture` + 50+ GLES 符号 | Chocolate Doom 同时使用 OpenGL ES 1.x 和 2.0，但两个库都未链接 | 添加 `-lGLESv1_CM -lGLESv2` 到链接器标志 | `e8cd299` |
+| L3 | `_gxx_personality_v0` | C++ 异常处理 ABI 符号未解析。SDL2 静态库使用 C++ 代码编译；`clang`（C 链接器）不引入 C++ 运行时 | 切换到 `clang++` 链接器（`$CXX`），添加 `-lc++_shared`（C++ 链接器隐式添加），在 APK 中打包 `libc++_shared.so` | `2939cd6` |
+| L4 | `__android_log_write` | Android 日志库未链接；`-llog` 在更早的链接行中存在，但在切换到 `$CXX` 时被丢弃 | 将 `-llog` 加回链接器标志 | `9331bcd` |
+| L5 | `ANativeWindow_setBuffersGeometry` | Android NativeWindow API 未链接；SDL2 视频后端调用此函数 | 添加 `-landroid` 到链接器标志 | `9331bcd` |
+
+### 最终链接器调用
+
+```bash
+$CXX -shared -fPIC -o libdoom.so \
+    -Wl,--whole-archive libdoom.a libtextscreen.a \
+    libopl.a libpcsound.a -Wl,--no-whole-archive \
+    $COMMON_OBJ_DIR/*.c.o \
+    $SDL2_LIB $SDL2_MIXER_LIB \
+    -lm -ldl -llog -lOpenSLES -lGLESv1_CM -lGLESv2 -landroid
+```
+
+### 验证
+
+```bash
+# 检查 NEEDED 库
+readelf -d libdoom.so | grep NEEDED
+# 输出：libm.so、libdl.so、liblog.so、libOpenSLES.so、
+#       libGLESv1_CM.so、libGLESv2.so、libc++_shared.so、libc.so
+
+# 确认没有未定义符号
+nm -D libdoom.so | grep -E "I_VideoBuffer|glBindTexture|_gxx_personality|__android_log_write|ANativeWindow_setBuffersGeometry"
+# 全部已解析 ✓
+```
+
+### 经验教训
+
+1. **公共源码在可执行文件中，不在库中**：Chocolate Doom 的 cmake 将共享源码（`i_*.c`、`m_*.c`）放入 `chocolate-doom` 可执行目标，而不是 `libdoom.a`。我们仅编译可执行目标以获取 `.o` 文件（链接步骤失败 — Android 上没有 `main()` — 但没关系）。
+
+2. **GLES v1 + v2 两者都需要**：Chocolate Doom 使用 GLES 1.x 进行 2D 屏幕渲染，使用 GLES 2.0 进行缩放/着色器。两者都必须链接。
+
+3. **来自 SDL2 的 C++ ABI**：即使你的代码是纯 C，链接包含 C++ 代码的静态库也需要 `clang++` 作为链接器。缺失 C++ ABI 符号（`_gxx_personality_v0`、`__cxa_*`）是 #1 症状。
+
+4. **Android 系统库**：`-llog`（日志）、`-landroid`（NativeWindow）、`-lOpenSLES`（音频）在链接 Android 版 SDL2 时经常需要，但容易被忽略。

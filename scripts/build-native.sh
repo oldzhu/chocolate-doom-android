@@ -33,7 +33,7 @@ SDL2_MIXER_LIB="$SDL2_ANDROID/lib/libSDL2_mixer.a"
 SDL2_CMAKE_DIR="$SDL2_ANDROID/lib/cmake/SDL2"
 
 export CC CXX
-GAMES="doom heretic hexen strife setup"
+GAMES="doom heretic hexen strife"
 
 # ── Submodule check ──
 if [ ! -f "$CHOCO_SRC/src/doom/st_stuff.c" ]; then
@@ -84,7 +84,7 @@ cmake "$CHOCO_SRC" \
 
 # Build only the static library targets (skip executables like chocolate-server)
 echo "   Compiling static libs..."
-make textscreen opl pcsound doom heretic hexen strife setup -j$(nproc) 2>&1 | tail -5
+make textscreen opl pcsound doom heretic hexen strife -j$(nproc) 2>&1 | tail -5
 echo "   ✓ All static libs built"
 
 # Build chocolate-doom target to compile common sources (i_video.c, i_input.c, etc.)

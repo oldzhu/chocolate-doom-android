@@ -1,35 +1,14 @@
 # Build artifacts
-*.apk
-!release/*.apk
-*.dex
-*.class
-
-# Native build artifacts
-*.o
-*.a
-*.so
-*.lo
-*.la
-libtool
-Makefile
-CMakeCache.txt
-CMakeFiles/
-cmake_install.cmake
+build/
+release/*.apk
+release/*.apk.idsig
 
 # IDE
 .idea/
 *.iml
 .gradle/
+local.properties
 
 # OS
 .DS_Store
 Thumbs.db
-
-# NDK/SDK (user installs separately)
-ndk/
-SDK/
-jdk*/
-
-# Temporary
-/tmp/
-/build-tmp/

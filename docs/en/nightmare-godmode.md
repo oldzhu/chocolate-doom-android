@@ -115,7 +115,7 @@ Nightmare mode + no cheats = vanilla behavior. Working as intended.
 
 ### Implementation Plan
 
-1. **Clone source**: `git clone https://github.com/chocolate-doom/chocolate-doom.git ~/android-toolchain/chocolate-doom-src`
+1. **Clone source**: The git submodule already provides Chocolate Doom at `native/chocolate-doom/` (tag `chocolate-doom-3.1.1`). Run `git submodule update --init` if needed.
 2. **Patch**: Remove `gameskill != sk_nightmare` from `st_stuff.c:393`
 3. **Rebuild**: Run `scripts/build-native.sh`
 4. **Rebuild APK**: Run `scripts/build-apk.sh doom`

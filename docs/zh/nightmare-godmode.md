@@ -115,7 +115,7 @@ Java (TouchControls.java)
 
 ### 实施计划
 
-1. **克隆源码**：`git clone https://github.com/chocolate-doom/chocolate-doom.git ~/android-toolchain/chocolate-doom-src`
+1. **克隆源码**：git 子模块已在 `native/chocolate-doom/`（标签 `chocolate-doom-3.1.1`）提供 Chocolate Doom。如有需要，运行 `git submodule update --init`。
 2. **修补**：从 `st_stuff.c:393` 移除 `gameskill != sk_nightmare`
 3. **重新构建**：运行 `scripts/build-native.sh`
 4. **重新构建 APK**：运行 `scripts/build-apk.sh doom`
