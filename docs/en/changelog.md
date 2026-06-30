@@ -272,3 +272,77 @@ nm -D libdoom.so | grep -E "I_VideoBuffer|glBindTexture|_gxx_personality|__andro
 3. **C++ ABI from SDL2**: Even if your code is pure C, linking a static lib with C++ code requires `clang++` as the linker. Missing C++ ABI symbols (`_gxx_personality_v0`, `__cxa_*`) are the #1 symptom.
 
 4. **Android system libs**: `-llog` (logging), `-landroid` (NativeWindow), `-lOpenSLES` (audio) are frequently needed when linking SDL2 for Android but easy to overlook.
+
+---
+
+## Sound Regression — No Audio Output (2026-06-30)
+
+### Symptom
+
+After linker fixes and build system migration, sound effects and music stopped working. Game launched and ran, but completely silent.
+
+### Root Cause
+
+`build-native.sh` had `-DENABLE_SDL2_MIXER=OFF` in the cmake configuration (added during earlier build fix to avoid autotools `sdl2-config` failure). This cmake flag defines `DISABLE_SDL2MIXER=1` at compile time, which wraps the **entire `i_sdlsound.c`** file in `#ifndef DISABLE_SDL2MIXER ... #endif`.
+
+```c
+// i_sdlsound.c:55 — entire file wrapped in this guard
+#ifndef DISABLE_SDL2MIXER
+    // ALL sound initialization, mixing, and playback code
+    // I_SDL_InitSound(), Mix_OpenAudioDevice(), etc.
+#endif  // line 1146
+```
+
+When `DISABLE_SDL2MIXER` is defined, the `sound_sdl_module` (SDL-based sound) is completely empty. The only remaining module is `sound_pcsound_module` (PC speaker emulation), which produces no audible output on Android devices.
+
+**Impact chain:**
+```
+-DENABLE_SDL2_MIXER=OFF
+  → DISABLE_SDL2MIXER=1  (add_compile_definitions in CMakeLists.txt)
+    → i_sdlsound.c is completely excluded
+      → sound_sdl_module = empty
+        → I_InitSound() only tries pcsound
+          → PC speaker emulation = SILENT on Android
+```
+
+### Fix
+
+1. **Change cmake flag**: `-DENABLE_SDL2_MIXER=ON` (not OFF)
+2. **Provide SDL2_mixer cmake module**: Chocolate Doom's cmake calls `find_package(SDL2_mixer)` which needs `SDL2_MIXER_INCLUDE_DIR` and `SDL2_MIXER_LIBRARY`. Pass these directly as cmake variables since our prebuilt SDL2_mixer doesn't ship cmake config files:
+   ```
+   -DSDL2_MIXER_INCLUDE_DIR="$SDL2_ANDROID/include/SDL2"
+   -DSDL2_MIXER_LIBRARY="$SDL2_ANDROID/lib/libSDL2_mixer.a"
+   -DSDL2_mixer_FOUND=TRUE
+   ```
+3. **Create `FindSDL2_mixer.cmake`**: A minimal cmake find-module at `$SDL2_ANDROID/lib/cmake/SDL2_mixer/FindSDL2_mixer.cmake` that creates the `SDL2_mixer::SDL2_mixer` imported target. Required for cmake's `find_package(SDL2_mixer)` in MODULE mode.
+4. **Add `-DCMAKE_MODULE_PATH`**: Point to the directory containing `FindSDL2_mixer.cmake`.
+
+### Verification
+
+```bash
+# Confirm sound module is compiled into .so
+nm -D libdoom.so | grep "Mix_OpenAudio"
+# Must show: T Mix_OpenAudio  (defined, not U undefined)
+
+nm -D libdoom.so | grep "sound_sdl_module"
+# Must show: D sound_sdl_module  (data symbol present)
+```
+
+### Runtime Behavior
+
+- AAudio: requested but **denied by OPPO/Realme ColorOS** system policy ("aaudio denied with incompatible policy such as performance noise"). This is an OPPO-specific restriction.
+- Fallback: **standard AudioTrack** succeeds at 44100 Hz, 16-bit, stereo
+- Audio track: `createTrack state 0` (success), no errors
+
+### Why this regression happened
+
+The `-DENABLE_SDL2_MIXER=OFF` flag was originally added to avoid an autotools `sdl2-config` configure failure when building SDL2_mixer from source. After switching to prebuilt SDL2_mixer (from the `SDL2-android` project), the configure issue was gone, but the flag was never removed. The code compiled and linked without errors — the build gave no indication that sound was silently disabled.
+
+**Lesson**: A successful build does not guarantee all features are compiled. Check preprocessor defines and symbol tables to verify what's actually in the binary.
+
+| Aspect | Detail |
+|--------|--------|
+| **Symptom** | No sound effects or music. Game runs but silent. |
+| **Root Cause** | `-DENABLE_SDL2_MIXER=OFF` → `DISABLE_SDL2MIXER=1` → entire `i_sdlsound.c` excluded → only PC speaker sound (silent on Android) |
+| **Fix** | `-DENABLE_SDL2_MIXER=ON` + pass SDL2_mixer cmake variables directly |
+| **Commit** | `b906842` |

@@ -272,3 +272,77 @@ nm -D libdoom.so | grep -E "I_VideoBuffer|glBindTexture|_gxx_personality|__andro
 3. **来自 SDL2 的 C++ ABI**：即使你的代码是纯 C，链接包含 C++ 代码的静态库也需要 `clang++` 作为链接器。缺失 C++ ABI 符号（`_gxx_personality_v0`、`__cxa_*`）是 #1 症状。
 
 4. **Android 系统库**：`-llog`（日志）、`-landroid`（NativeWindow）、`-lOpenSLES`（音频）在链接 Android 版 SDL2 时经常需要，但容易被忽略。
+
+---
+
+## 声音回归 — 无音频输出 (2026-06-30)
+
+### 症状
+
+链接器修复和构建系统迁移后，音效和音乐停止工作。游戏可以启动运行，但完全静音。
+
+### 根因
+
+`build-native.sh` 在 cmake 配置中有 `-DENABLE_SDL2_MIXER=OFF`（在早期构建修复中添加，旨在避免 autotools `sdl2-config` 失败）。该 cmake 标志在编译时定义了 `DISABLE_SDL2MIXER=1`，将**整个 `i_sdlsound.c`** 文件包裹在 `#ifndef DISABLE_SDL2MIXER ... #endif` 中。
+
+```c
+// i_sdlsound.c:55 — 整个文件被此守卫包裹
+#ifndef DISABLE_SDL2MIXER
+    // 所有声音初始化、混音和回放代码
+    // I_SDL_InitSound()、Mix_OpenAudioDevice() 等
+#endif  // 第 1146 行
+```
+
+当 `DISABLE_SDL2MIXER` 被定义时，`sound_sdl_module`（基于 SDL 的声音模块）完全为空。唯一剩余的模块是 `sound_pcsound_module`（PC 扬声器模拟），在 Android 设备上不产生可听输出。
+
+**影响链：**
+```
+-DENABLE_SDL2_MIXER=OFF
+  → DISABLE_SDL2MIXER=1  (CMakeLists.txt 中的 add_compile_definitions)
+    → i_sdlsound.c 被完全排除
+      → sound_sdl_module = 空
+        → I_InitSound() 只能尝试 pcsound
+          → PC 扬声器模拟 = Android 上静音
+```
+
+### 修复
+
+1. **更改 cmake 标志**：`-DENABLE_SDL2_MIXER=ON`（而非 OFF）
+2. **提供 SDL2_mixer cmake 模块**：Chocolate Doom 的 cmake 调用 `find_package(SDL2_mixer)`，需要 `SDL2_MIXER_INCLUDE_DIR` 和 `SDL2_MIXER_LIBRARY`。由于我们的预编译 SDL2_mixer 不包含 cmake 配置文件，直接以 cmake 变量形式传入：
+   ```
+   -DSDL2_MIXER_INCLUDE_DIR="$SDL2_ANDROID/include/SDL2"
+   -DSDL2_MIXER_LIBRARY="$SDL2_ANDROID/lib/libSDL2_mixer.a"
+   -DSDL2_mixer_FOUND=TRUE
+   ```
+3. **创建 `FindSDL2_mixer.cmake`**：一个最小化的 cmake find-module，位于 `$SDL2_ANDROID/lib/cmake/SDL2_mixer/FindSDL2_mixer.cmake`，创建 `SDL2_mixer::SDL2_mixer` 导入目标。cmake 的 `find_package(SDL2_mixer)` 在 MODULE 模式下需要此文件。
+4. **添加 `-DCMAKE_MODULE_PATH`**：指向包含 `FindSDL2_mixer.cmake` 的目录。
+
+### 验证
+
+```bash
+# 确认声音模块已编译进 .so
+nm -D libdoom.so | grep "Mix_OpenAudio"
+# 必须显示：T Mix_OpenAudio（已定义，不是 U 未定义）
+
+nm -D libdoom.so | grep "sound_sdl_module"
+# 必须显示：D sound_sdl_module（数据符号存在）
+```
+
+### 运行时行为
+
+- AAudio：已请求但被 **OPPO/Realme ColorOS 系统策略拒绝**（"aaudio denied with incompatible policy such as performance noise"）。这是 OPPO 特有的限制。
+- 回退：**标准 AudioTrack** 成功以 44100 Hz、16-bit、立体声创建
+- 音频轨道：`createTrack state 0`（成功），无错误
+
+### 为何发生此回归
+
+`-DENABLE_SDL2_MIXER=OFF` 标志最初是为了避免从源码构建 SDL2_mixer 时的 autotools `sdl2-config` 配置失败。切换到预编译 SDL2_mixer（来自 `SDL2-android` 项目）后，配置问题已解决，但该标志从未被移除。代码编译和链接均无错误 — 构建过程没有任何迹象表明声音已被静默禁用。
+
+**教训**：构建成功并不保证所有功能都已编译。检查预处理器定义和符号表以验证二进制文件中实际包含的内容。
+
+| 方面 | 详情 |
+|--------|--------|
+| **症状** | 无音效或音乐。游戏运行但静音。 |
+| **根因** | `-DENABLE_SDL2_MIXER=OFF` → `DISABLE_SDL2MIXER=1` → 整个 `i_sdlsound.c` 被排除 → 仅剩 PC 扬声器声音（Android 上静音） |
+| **修复** | `-DENABLE_SDL2_MIXER=ON` + 直接传入 SDL2_mixer cmake 变量 |
+| **提交** | `b906842` |

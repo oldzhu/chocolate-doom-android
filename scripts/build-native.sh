@@ -1,6 +1,6 @@
 #!/bin/bash
-# Cross-compile chocolate-doom for Android (arm64-v8a)
-# Produces libmain.so for each game variant.
+# Cross-compile Chocolate Doom for Android (arm64-v8a)
+# Produces libdoom.so → used by build-apk.sh as libmain.so
 # Prerequisites: NDK, prebuilt SDL2 + SDL2_mixer (in SDL2-android/)
 # Usage: ./scripts/build-native.sh
 set -e
@@ -33,7 +33,6 @@ SDL2_MIXER_LIB="$SDL2_ANDROID/lib/libSDL2_mixer.a"
 SDL2_CMAKE_DIR="$SDL2_ANDROID/lib/cmake/SDL2"
 
 export CC CXX
-GAMES="doom heretic hexen strife"
 
 # ── Submodule check ──
 if [ ! -f "$CHOCO_SRC/src/doom/st_stuff.c" ]; then
@@ -46,6 +45,7 @@ fi
 if [ ! -f "$SDL2_LIB" ]; then
     echo "⚠️  Prebuilt SDL2 not found at $SDL2_LIB"
     echo "   Expected at: $SDL2_ANDROID/lib/"
+    echo "   Run: ./scripts/setup-toolchain.sh"
     exit 1
 fi
 
@@ -61,12 +61,12 @@ for patch in "$CHOCO_PATCHES"/*.patch; do
 done
 echo "   ✓ All patches applied"
 
-# ── Full cmake + make (static libs only) ──
+# ── cmake configure + build static libs ──
+echo ""
 echo "=== Building Chocolate Doom (static libs) ==="
 mkdir -p "$CHOCO_BUILD"
 cd "$CHOCO_BUILD"
 
-# Re-run cmake to pick up any source changes (including patches)
 echo "   Configuring..."
 cmake "$CHOCO_SRC" \
     -DCMAKE_SYSTEM_NAME=Android \
@@ -86,10 +86,10 @@ cmake "$CHOCO_SRC" \
     -DENABLE_SDL2_NET=OFF \
     2>&1 | tail -3
 
-# Build only the static library targets (skip executables like chocolate-server)
+# Build static libraries (only what DOOM needs)
 echo "   Compiling static libs..."
-make textscreen opl pcsound doom heretic hexen strife -j$(nproc) 2>&1 | tail -5
-echo "   ✓ All static libs built"
+make textscreen opl pcsound doom -j$(nproc) 2>&1 | tail -5
+echo "   ✓ Static libs built"
 
 # Build chocolate-doom target to compile common sources (i_video.c, i_input.c, etc.)
 # These are compiled as part of the executable, not the static libs.
@@ -101,33 +101,32 @@ echo "   ✓ Common sources compiled"
 # Common object directory (where chocolate-doom's .o files end up)
 COMMON_OBJ_DIR="$CHOCO_BUILD/src/CMakeFiles/chocolate-doom.dir"
 
-# ── Link game .so files ──
-echo "=== Linking game shared libraries ==="
-for GAME in $GAMES; do
-    echo "--- $GAME ---"
-    GAME_DIR="$CHOCO_BUILD/src/$GAME"
-    mkdir -p "$GAME_DIR"
-    cd "$GAME_DIR"
+# ── Link libdoom.so ──
+echo ""
+echo "=== Linking libdoom.so ==="
+DOOM_DIR="$CHOCO_BUILD/src/doom"
+mkdir -p "$DOOM_DIR"
+cd "$DOOM_DIR"
 
-    "$CXX" -shared -fPIC -o "lib${GAME}.so" \
-        -Wl,--whole-archive \
-        "$CHOCO_BUILD/src/$GAME"/*.a \
-        "$CHOCO_BUILD/textscreen"/*.a \
-        "$CHOCO_BUILD/opl"/*.a \
-        "$CHOCO_BUILD/pcsound"/*.a \
-        -Wl,--no-whole-archive \
-        "$COMMON_OBJ_DIR"/*.c.o \
-        "$SDL2_LIB" \
-        "$SDL2_MIXER_LIB" \
-        -lm -ldl -llog -lOpenSLES -lGLESv1_CM -lGLESv2 -landroid \
-        2>&1 | tail -2
+"$CXX" -shared -fPIC -o libdoom.so \
+    -Wl,--whole-archive \
+    "$CHOCO_BUILD/src/doom"/*.a \
+    "$CHOCO_BUILD/textscreen"/*.a \
+    "$CHOCO_BUILD/opl"/*.a \
+    "$CHOCO_BUILD/pcsound"/*.a \
+    -Wl,--no-whole-archive \
+    "$COMMON_OBJ_DIR"/*.c.o \
+    "$SDL2_LIB" \
+    "$SDL2_MIXER_LIB" \
+    -lm -ldl -llog -lOpenSLES -lGLESv1_CM -lGLESv2 -landroid \
+    2>&1 | tail -2
 
-    echo "     → lib${GAME}.so built ($(du -h lib${GAME}.so | cut -f1))"
+echo "   → libdoom.so built ($(du -h libdoom.so | cut -f1))"
 
-    # Copy to expected location for build-apk.sh
-    mkdir -p "$TOOLCHAIN/apk/jniLibs/arm64-v8a"
-    cp "lib${GAME}.so" "$TOOLCHAIN/apk/jniLibs/arm64-v8a/"
-done
+# Copy to expected location for build-apk.sh
+mkdir -p "$TOOLCHAIN/apk/jniLibs/arm64-v8a"
+cp libdoom.so "$TOOLCHAIN/apk/jniLibs/arm64-v8a/"
+echo "   → Copied to $TOOLCHAIN/apk/jniLibs/arm64-v8a/"
 
 # Copy C++ runtime (needed by SDL2)
 CXX_SHARED="$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so"
@@ -138,6 +137,6 @@ fi
 
 echo ""
 echo "=== ✅ Native build complete ==="
-echo "Output: $TOOLCHAIN/apk/jniLibs/arm64-v8a/lib<game>.so"
+echo "Output: $TOOLCHAIN/apk/jniLibs/arm64-v8a/libdoom.so"
 echo ""
 echo "Next: ./scripts/build-apk.sh doom"

@@ -11,7 +11,7 @@
 # 2. Build native libraries (arm64-v8a)
 ./scripts/build-native.sh
 
-# 3. Build APK
+# 3. Build APK (DOOM only)
 ./scripts/build-apk.sh doom
 
 # 4. Install to device
