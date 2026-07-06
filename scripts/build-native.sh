@@ -98,14 +98,26 @@ echo "   Compiling common sources (chocolate-doom target)..."
 make chocolate-doom -j$(nproc) 2>&1 | tail -3 || true
 echo "   ✓ Common sources compiled"
 
+# Output directory for linked .so
+DOOM_DIR="$CHOCO_BUILD/src/doom"
+mkdir -p "$DOOM_DIR"
+
+# ── Compile JNI game state bridge ──
+echo "   Compiling JNI game state bridge..."
+JNI_INCLUDE="-I$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include"
+CHOCO_INCLUDE="-I$CHOCO_SRC/src -I$CHOCO_SRC/src/doom -I$CHOCO_SRC/textscreen"
+CHOCO_INCLUDE_PIC="-I$CHOCO_BUILD -I$CHOCO_BUILD/src -I$CHOCO_BUILD/src/doom"
+"$CC" -fPIC -c "$REPO_ROOT/native/jni_game_state.c" \
+    $JNI_INCLUDE $CHOCO_INCLUDE $CHOCO_INCLUDE_PIC \
+    -o "$DOOM_DIR/jni_game_state.o" 2>&1
+echo "   ✓ JNI bridge compiled"
+
 # Common object directory (where chocolate-doom's .o files end up)
 COMMON_OBJ_DIR="$CHOCO_BUILD/src/CMakeFiles/chocolate-doom.dir"
 
 # ── Link libdoom.so ──
 echo ""
 echo "=== Linking libdoom.so ==="
-DOOM_DIR="$CHOCO_BUILD/src/doom"
-mkdir -p "$DOOM_DIR"
 cd "$DOOM_DIR"
 
 "$CXX" -shared -fPIC -o libdoom.so \
@@ -116,6 +128,7 @@ cd "$DOOM_DIR"
     "$CHOCO_BUILD/pcsound"/*.a \
     -Wl,--no-whole-archive \
     "$COMMON_OBJ_DIR"/*.c.o \
+    "$DOOM_DIR/jni_game_state.o" \
     "$SDL2_LIB" \
     "$SDL2_MIXER_LIB" \
     -lm -ldl -llog -lOpenSLES -lGLESv1_CM -lGLESv2 -landroid \

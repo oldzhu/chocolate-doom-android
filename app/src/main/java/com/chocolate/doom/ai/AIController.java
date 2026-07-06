@@ -3,6 +3,7 @@ package com.chocolate.doom.ai;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
+import com.chocolate.doom.GameState;
 import org.libsdl.app.SDLActivity;
 
 /**
@@ -19,12 +20,23 @@ import org.libsdl.app.SDLActivity;
 public class AIController {
     private static final String TAG = "AIController";
 
-    // ── State features (v1.0: heuristic, no JNI) ──
-    // state[0] = time alive / 600 (normalized 0-1)
-    // state[1] = 1.0 if recently fired, 0.0 otherwise
-    // state[2] = 1.0 if recently used, 0.0 otherwise
-    // state[3] = movement direction encoded (0=none, 0.25=fwd, 0.5=back, 0.75=left, 1.0=right)
-    private static final int STATE_SIZE = 4;
+    // ── State features (v2.0: JNI game state) ──
+    // state[0]  = health / 100       (normalized 0-2)
+    // state[1]  = armor / 100        (normalized 0-2)
+    // state[2]  = ammo bullets / max
+    // state[3]  = ammo shells / max
+    // state[4]  = ammo rockets / max
+    // state[5]  = ammo cells / max
+    // state[6]  = current weapon / NUMWEAPONS
+    // state[7]  = has backpack (0/1)
+    // state[8]  = has god mode (0/1)
+    // state[9]  = recently damaged (damagecount > 0 ? 1 : 0)
+    // state[10] = is dead (0/1)
+    // state[11] = weapon diversity (owned count / NUMWEAPONS)
+    // state[12] = time alive / 600
+    // state[13] = kills / 100
+    // state[14] = secrets / 10
+    private static final int STATE_SIZE = 15;
 
     // ── Actions (14 discrete) ──
     private static final int NUM_ACTIONS = 14;
@@ -176,54 +188,81 @@ public class AIController {
         running = false;
     }
 
-    // ──────── State Extraction (heuristic v1.0) ────────
+    // ──────── State Extraction (JNI game state v2.0) ────────
 
     /**
-     * Extract normalized state features.
-     * v1.0: Heuristic — time-based features only.
-     * v1.5: Replace with JNI game state extraction (health, ammo, kills, etc.)
+     * Extract normalized state features from native DOOM engine.
+     * All values normalized to 0-1 range for neural net input.
      */
     private void extractState(float[] state) {
-        long elapsed = (System.currentTimeMillis() - startTime) / 1000; // seconds
-        state[0] = Math.min(1.0f, elapsed / 600f);  // time alive (caps at 10 min)
+        float maxHealth = 100f;
+        float maxArmor = 200f;
 
-        // Action-based features from previous step
-        if (prevAction == 7) state[1] = 1.0f;  // recently fired
-        else state[1] *= 0.8f;                  // decay
+        state[0] = Math.max(0, GameState.getPlayerHealth()) / maxHealth;
+        state[1] = Math.max(0, GameState.getPlayerArmor()) / maxArmor;
 
-        if (prevAction == 8) state[2] = 1.0f;  // recently used
-        else state[2] *= 0.8f;
+        // Ammo (avoid division by zero for max values)
+        state[2] = safeDiv(GameState.getAmmoBullets(), GameState.getMaxAmmoBullets());
+        state[3] = safeDiv(GameState.getAmmoShells(), GameState.getMaxAmmoShells());
+        state[4] = safeDiv(GameState.getAmmoRockets(), GameState.getMaxAmmoRockets());
+        state[5] = safeDiv(GameState.getAmmoCells(), GameState.getMaxAmmoCells());
 
-        // Movement direction encoding
-        switch (prevAction) {
-            case 1: state[3] = 0.25f; break; // forward
-            case 2: state[3] = 0.50f; break; // backward
-            case 3: state[3] = 0.75f; break; // left
-            case 4: state[3] = 1.00f; break; // right
-            default: state[3] *= 0.5f;         // decay toward 0
-        }
+        state[6] = (float) GameState.getCurrentWeapon() / 9f; // NUMWEAPONS
+        state[7] = GameState.hasBackpack() ? 1f : 0f;
+        state[8] = GameState.hasGodMode() ? 1f : 0f;
+        state[9] = (GameState.getDamageCount() > 0) ? 1f : 0f;
+        state[10] = GameState.isPlayerDead() ? 1f : 0f;
+
+        // Weapon diversity: count owned / total
+        int ownedMask = GameState.getWeaponsOwned();
+        int ownedCount = Integer.bitCount(ownedMask);
+        state[11] = (float) ownedCount / 9f;
+
+        // Time alive (kept from v1.0)
+        long elapsed = (System.currentTimeMillis() - startTime) / 1000;
+        state[12] = Math.min(1.0f, elapsed / 600f);
+
+        // Stats
+        state[13] = Math.min(1.0f, GameState.getKillCount() / 100f);
+        state[14] = Math.min(1.0f, GameState.getSecretCount() / 10f);
+    }
+
+    private float safeDiv(int num, int den) {
+        if (den <= 0) return 0f;
+        return Math.min(1.0f, (float) num / (float) den);
     }
 
     // ──────── Reward Function ────────
 
     /**
-     * Heuristic reward: +0.01 per frame alive, -0.02 for standing still,
-     * small bonuses for firing and using.
+     * Reward based on real game outcomes.
+     * +kills, +secrets, +items, -damage, +alive_bonus.
      */
     private float calculateReward(float[] prev, float[] curr, int action) {
         float reward = 0.01f; // alive bonus
 
-        // Penalty for NOOP (encourages doing something)
-        if (action == 0) reward -= 0.005f;
+        // Kill reward (kills increased since last step)
+        float killDelta = curr[13] - prev[13];
+        if (killDelta > 0) reward += killDelta * 100f;  // 1 kill = +1.0
 
-        // Bonus for firing
-        if (action == 7) reward += 0.02f;
+        // Secret discovery
+        float secretDelta = curr[14] - prev[14];
+        if (secretDelta > 0) reward += secretDelta * 10f;
 
-        // Bonus for moving
-        if (action >= 1 && action <= 6) reward += 0.005f;
+        // Damage penalty
+        if (curr[9] > prev[9]) reward -= 0.05f;  // just got hit
 
-        // Bonus for weapon switching (exploration)
-        if (action >= 10) reward += 0.01f;
+        // Death penalty
+        if (curr[10] > 0 && prev[10] == 0) reward -= 1.0f;
+
+        // Health loss penalty
+        float healthDelta = curr[0] - prev[0];
+        if (healthDelta < 0) reward += healthDelta * 0.5f;  // health decreased = penalty
+
+        // Action shaping
+        if (action == 0) reward -= 0.005f;     // NOOP penalty
+        if (action == 7) reward += 0.01f;      // FIRE bonus
+        if (action >= 1 && action <= 6) reward += 0.003f; // movement bonus
 
         return reward;
     }

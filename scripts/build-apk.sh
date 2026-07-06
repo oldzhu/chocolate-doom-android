@@ -62,6 +62,7 @@ if [ "$GAME" = "doom" ]; then
     JAVA_FILES+=(
         "$REPO_ROOT/app/src/main/java/$PKG_PATH/TouchControls.java"
         "$REPO_ROOT/app/src/main/java/$PKG_PATH/AnalogJoystick.java"
+        "$REPO_ROOT/app/src/main/java/$PKG_PATH/GameState.java"
         "$REPO_ROOT/app/src/main/java/$PKG_PATH/ai/NeuralNet.java"
         "$REPO_ROOT/app/src/main/java/$PKG_PATH/ai/DQNPlayer.java"
         "$REPO_ROOT/app/src/main/java/$PKG_PATH/ai/AIController.java"
