@@ -84,8 +84,10 @@ public class AIController {
     // ── Stuck detection ──
     private int prevX = 0, prevY = 0;
     private int stuckCounter = 0;
+    private final java.util.Random rng = new java.util.Random();
     private int prevKills = 0;
-    private static final int STUCK_THRESHOLD = 10;  // steps before considered stuck
+    private static final int STUCK_THRESHOLD = 5;   // steps before considered stuck
+    private static final int STUCK_RECOVERY = 5;     // consecutive stuck → force turn
 
     // ── Frame-skip ──
     private static final int FRAME_SKIP = 4;       // act every 4 game frames
@@ -166,8 +168,15 @@ public class AIController {
                             currentState.clone(), false);
                 }
 
-                // 4. Choose action
-                int action = dqn.chooseAction(currentState);
+                // 4. Choose action (override if stuck)
+                int action;
+                if (stuckCounter >= STUCK_RECOVERY) {
+                    // Force random turn/strafe to unstick — bypass DQN
+                    int[] turnActions = {3, 4, 5, 6}; // LEFT, RIGHT, STRAFEL, STRAFER
+                    action = turnActions[rng.nextInt(turnActions.length)];
+                } else {
+                    action = dqn.chooseAction(currentState);
+                }
 
                 // 5. Execute action
                 executeAction(action);
@@ -234,15 +243,14 @@ public class AIController {
         // ── Stuck detection ──
         int currX = GameState.getPlayerX();
         int currY = GameState.getPlayerY();
-        boolean isMovementAction = (prevAction >= 1 && prevAction <= 6);
-        if (isMovementAction && currX == prevX && currY == prevY) {
-            stuckCounter++;
+        if (currX == prevX && currY == prevY) {
+            stuckCounter++;  // position unchanged this step
         } else {
-            stuckCounter = Math.max(0, stuckCounter - 1);
+            stuckCounter = 0;  // moved — reset
         }
         prevX = currX;
         prevY = currY;
-        state[15] = (stuckCounter >= STUCK_THRESHOLD) ? 1f : 0f;
+        state[15] = Math.min(1f, (float) stuckCounter / (float) STUCK_RECOVERY);
 
         // ── Ammo available ──
         state[16] = GameState.hasAmmoForCurrentWeapon() ? 1f : 0f;
@@ -280,8 +288,8 @@ public class AIController {
         float healthDelta = curr[0] - prev[0];
         if (healthDelta < 0) reward += healthDelta * 0.5f;
 
-        // ── Stuck penalty ──
-        if (curr[15] > 0.5f) reward -= 0.1f;  // heavy penalty for being stuck
+        // ── Stuck penalty (continuous) ──
+        if (curr[15] > 0.5f) reward -= curr[15] * 0.15f;  // grows with stuck time
 
         // ── Fire effectiveness ──
         if (action == 7) {
