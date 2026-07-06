@@ -15,6 +15,14 @@ public class GameState {
     public static native int getPlayerHealth();
     public static native int getPlayerArmor();
 
+    // ── Position (for stuck detection) ──
+    /** Player X in map units */
+    public static native int getPlayerX();
+    /** Player Y in map units */
+    public static native int getPlayerY();
+    /** Player facing angle (0-359, BAM units / ANG1) */
+    public static native int getPlayerAngle();
+
     // ── Ammo (current + max for normalization) ──
     public static native int getAmmoBullets();
     public static native int getAmmoShells();
@@ -43,4 +51,7 @@ public class GameState {
     public static native int getDamageCount();
     public static native boolean hasBackpack();
     public static native boolean hasGodMode();
+
+    /** Whether the current weapon has ammo remaining */
+    public static native boolean hasAmmoForCurrentWeapon();
 }

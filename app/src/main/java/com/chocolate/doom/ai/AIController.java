@@ -20,7 +20,7 @@ import org.libsdl.app.SDLActivity;
 public class AIController {
     private static final String TAG = "AIController";
 
-    // ── State features (v2.0: JNI game state) ──
+    // ── State features (v2.1: JNI + spatial awareness) ──
     // state[0]  = health / 100       (normalized 0-2)
     // state[1]  = armor / 100        (normalized 0-2)
     // state[2]  = ammo bullets / max
@@ -36,7 +36,9 @@ public class AIController {
     // state[12] = time alive / 600
     // state[13] = kills / 100
     // state[14] = secrets / 10
-    private static final int STATE_SIZE = 15;
+    // state[15] = is stuck (0/1) — position unchanged for >10 forward steps
+    // state[16] = has ammo for current weapon (0/1)
+    private static final int STATE_SIZE = 17;
 
     // ── Actions (14 discrete) ──
     private static final int NUM_ACTIONS = 14;
@@ -79,6 +81,12 @@ public class AIController {
     private int totalSteps = 0;
     private int totalFires = 0;
 
+    // ── Stuck detection ──
+    private int prevX = 0, prevY = 0;
+    private int stuckCounter = 0;
+    private int prevKills = 0;
+    private static final int STUCK_THRESHOLD = 10;  // steps before considered stuck
+
     // ── Frame-skip ──
     private static final int FRAME_SKIP = 4;       // act every 4 game frames
     private static final long STEP_DELAY_MS = 114;  // ~8.75 Hz (35fps / 4)
@@ -111,6 +119,8 @@ public class AIController {
         startTime = System.currentTimeMillis();
         totalSteps = 0;
         totalFires = 0;
+        stuckCounter = 0;
+        prevX = 0; prevY = 0;
         prevAction = 0;
 
         running = true;
@@ -195,36 +205,47 @@ public class AIController {
      * All values normalized to 0-1 range for neural net input.
      */
     private void extractState(float[] state) {
-        float maxHealth = 100f;
-        float maxArmor = 200f;
+        int maxHealth = 100;
+        int maxArmor = 200;
 
-        state[0] = Math.max(0, GameState.getPlayerHealth()) / maxHealth;
-        state[1] = Math.max(0, GameState.getPlayerArmor()) / maxArmor;
+        state[0] = Math.max(0, GameState.getPlayerHealth()) / (float) maxHealth;
+        state[1] = Math.max(0, GameState.getPlayerArmor()) / (float) maxArmor;
 
-        // Ammo (avoid division by zero for max values)
         state[2] = safeDiv(GameState.getAmmoBullets(), GameState.getMaxAmmoBullets());
         state[3] = safeDiv(GameState.getAmmoShells(), GameState.getMaxAmmoShells());
         state[4] = safeDiv(GameState.getAmmoRockets(), GameState.getMaxAmmoRockets());
         state[5] = safeDiv(GameState.getAmmoCells(), GameState.getMaxAmmoCells());
 
-        state[6] = (float) GameState.getCurrentWeapon() / 9f; // NUMWEAPONS
+        state[6] = (float) GameState.getCurrentWeapon() / 9f;
         state[7] = GameState.hasBackpack() ? 1f : 0f;
         state[8] = GameState.hasGodMode() ? 1f : 0f;
         state[9] = (GameState.getDamageCount() > 0) ? 1f : 0f;
         state[10] = GameState.isPlayerDead() ? 1f : 0f;
 
-        // Weapon diversity: count owned / total
         int ownedMask = GameState.getWeaponsOwned();
-        int ownedCount = Integer.bitCount(ownedMask);
-        state[11] = (float) ownedCount / 9f;
+        state[11] = Integer.bitCount(ownedMask) / 9f;
 
-        // Time alive (kept from v1.0)
         long elapsed = (System.currentTimeMillis() - startTime) / 1000;
         state[12] = Math.min(1.0f, elapsed / 600f);
 
-        // Stats
         state[13] = Math.min(1.0f, GameState.getKillCount() / 100f);
         state[14] = Math.min(1.0f, GameState.getSecretCount() / 10f);
+
+        // ── Stuck detection ──
+        int currX = GameState.getPlayerX();
+        int currY = GameState.getPlayerY();
+        boolean isMovementAction = (prevAction >= 1 && prevAction <= 6);
+        if (isMovementAction && currX == prevX && currY == prevY) {
+            stuckCounter++;
+        } else {
+            stuckCounter = Math.max(0, stuckCounter - 1);
+        }
+        prevX = currX;
+        prevY = currY;
+        state[15] = (stuckCounter >= STUCK_THRESHOLD) ? 1f : 0f;
+
+        // ── Ammo available ──
+        state[16] = GameState.hasAmmoForCurrentWeapon() ? 1f : 0f;
     }
 
     private float safeDiv(int num, int den) {
@@ -241,28 +262,41 @@ public class AIController {
     private float calculateReward(float[] prev, float[] curr, int action) {
         float reward = 0.01f; // alive bonus
 
-        // Kill reward (kills increased since last step)
+        // Kill reward
         float killDelta = curr[13] - prev[13];
-        if (killDelta > 0) reward += killDelta * 100f;  // 1 kill = +1.0
+        if (killDelta > 0) reward += killDelta * 100f;  // +1.0 per kill
 
         // Secret discovery
         float secretDelta = curr[14] - prev[14];
-        if (secretDelta > 0) reward += secretDelta * 10f;
+        if (secretDelta > 0) reward += secretDelta * 10f;  // +1.0 per secret
 
         // Damage penalty
-        if (curr[9] > prev[9]) reward -= 0.05f;  // just got hit
+        if (curr[9] > prev[9]) reward -= 0.05f;
 
         // Death penalty
         if (curr[10] > 0 && prev[10] == 0) reward -= 1.0f;
 
-        // Health loss penalty
+        // Health loss
         float healthDelta = curr[0] - prev[0];
-        if (healthDelta < 0) reward += healthDelta * 0.5f;  // health decreased = penalty
+        if (healthDelta < 0) reward += healthDelta * 0.5f;
 
-        // Action shaping
-        if (action == 0) reward -= 0.005f;     // NOOP penalty
-        if (action == 7) reward += 0.01f;      // FIRE bonus
-        if (action >= 1 && action <= 6) reward += 0.003f; // movement bonus
+        // ── Stuck penalty ──
+        if (curr[15] > 0.5f) reward -= 0.1f;  // heavy penalty for being stuck
+
+        // ── Fire effectiveness ──
+        if (action == 7) {
+            // FIRE action
+            if (curr[16] < 0.5f) {
+                reward -= 0.05f;  // firing with no ammo = bad
+            } else if (killDelta > 0) {
+                reward += 0.02f;  // fire that killed something = good
+            }
+        }
+
+        // ── Action shaping ──
+        if (action == 0) reward -= 0.005f;        // NOOP
+        if (action >= 1 && action <= 6) reward += 0.003f;  // movement
+        if (action >= 10) reward += 0.005f;       // weapon switch (exploration)
 
         return reward;
     }

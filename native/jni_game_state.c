@@ -11,6 +11,7 @@
 #include "doomdef.h"
 #include "d_player.h"
 #include "doomstat.h"
+#include "p_mobj.h"
 
 /* ── Player Health ── */
 
@@ -22,6 +23,29 @@ Java_com_chocolate_doom_GameState_getPlayerHealth(JNIEnv *env, jclass cls) {
 JNIEXPORT jint JNICALL
 Java_com_chocolate_doom_GameState_getPlayerArmor(JNIEnv *env, jclass cls) {
     return players[consoleplayer].armorpoints;
+}
+
+/* ── Position (for stuck detection) ── */
+
+JNIEXPORT jint JNICALL
+Java_com_chocolate_doom_GameState_getPlayerX(JNIEnv *env, jclass cls) {
+    if (players[consoleplayer].mo)
+        return players[consoleplayer].mo->x >> FRACBITS;
+    return 0;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_chocolate_doom_GameState_getPlayerY(JNIEnv *env, jclass cls) {
+    if (players[consoleplayer].mo)
+        return players[consoleplayer].mo->y >> FRACBITS;
+    return 0;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_chocolate_doom_GameState_getPlayerAngle(JNIEnv *env, jclass cls) {
+    if (players[consoleplayer].mo)
+        return players[consoleplayer].mo->angle;
+    return 0;
 }
 
 /* ── Ammo ── */
@@ -122,4 +146,13 @@ Java_com_chocolate_doom_GameState_hasBackpack(JNIEnv *env, jclass cls) {
 JNIEXPORT jboolean JNICALL
 Java_com_chocolate_doom_GameState_hasGodMode(JNIEnv *env, jclass cls) {
     return (players[consoleplayer].cheats & CF_GODMODE) != 0;
+}
+
+/* ── Ammo check for current weapon ── */
+
+JNIEXPORT jboolean JNICALL
+Java_com_chocolate_doom_GameState_hasAmmoForCurrentWeapon(JNIEnv *env, jclass cls) {
+    player_t *p = &players[consoleplayer];
+    // For ammo-based weapons, check the ammo count
+    return p->ammo[weaponinfo[p->readyweapon].ammo] > 0;
 }
