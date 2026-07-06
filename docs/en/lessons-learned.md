@@ -185,3 +185,33 @@ adb shell am start -n com.chocolate.doom/.ChocolateDoom
 # Debug
 adb logcat | grep -E "(SDL|chocolate|FATAL|dlopen)"
 ```
+
+---
+
+## 10. AI needs spatial feedback, not just state
+
+**Problem:** AI v2.0 had 15 real game-state features (health, ammo, weapons, kills) but still fired until empty and walked into walls.
+
+**Why:** The DQN couldn't distinguish "firing at an enemy" from "firing at empty space" — both got the same +0.01 reward. Movement into a wall gave zero position change but the AI had no feature to detect that.
+
+**Fix (v2.1):**
+1. Added JNI for player position (`mo->x/y >> FRACBITS`): `getPlayerX()`, `getPlayerY()`
+2. Added stuck detector: track position across steps, flag when 10+ movement actions produce zero displacement
+3. Added `hasAmmoForCurrentWeapon()` JNI
+4. Reward overhaul: fire+no-ammo → -0.05, fire+kill → +0.02, stuck → -0.10
+
+**Lesson:** AI needs to know not just *what* is happening but *whether its actions are working*. Action-effectiveness feedback (did movement move me? did fire hit?) is often more important than full environment vision.
+
+## 11. JNI for AI state: keep it simple and additive
+
+**Problem:** Needed to expose 22+ game state values from C to Java for the AI.
+
+**Pattern that works:**
+- One `jni_game_state.c` file with all JNI functions
+- One `GameState.java` class with `static native` declarations
+- Each function reads ONE value from `players[consoleplayer]`
+- Compile with `$CC -fPIC` and link the `.o` into `libdoom.so`
+
+**Additive approach:** Start with essentials (health, ammo) and add position, ammo-check, etc. incrementally. Each new JNI call costs ~1 line of C + ~2 lines of Java.
+
+**Avoid:** Bulk JNI calls that copy entire structs — they're harder to extend and debug. Individual getters are self-documenting and fail independently.

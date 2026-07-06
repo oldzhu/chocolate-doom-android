@@ -346,3 +346,49 @@ nm -D libdoom.so | grep "sound_sdl_module"
 | **根因** | `-DENABLE_SDL2_MIXER=OFF` → `DISABLE_SDL2MIXER=1` → 整个 `i_sdlsound.c` 被排除 → 仅剩 PC 扬声器声音（Android 上静音） |
 | **修复** | `-DENABLE_SDL2_MIXER=ON` + 直接传入 SDL2_mixer cmake 变量 |
 | **提交** | `b906842` |
+
+---
+
+## AI 控制器 — JNI 游戏状态桥接 (2026-07-06)
+
+### AI v2.0：真实 DOOM 状态 (提交 `bb15830`)
+
+**之前（v1.0）：** AI 使用 4 个自我追踪的启发式特征 — 生存时间、最近开火标志、最近使用标志、移动方向编码。对实际游戏状态完全无感知。随机开火，撞墙行走，无法学习。
+
+**新增：**
+- `native/jni_game_state.c`：19 个 JNI 函数直接读取 `players[consoleplayer]`
+- `GameState.java`：原生方法声明
+- 15 个真实特征：生命值、护甲、4 种弹药、当前武器、武器位掩码、背包、上帝模式、伤害闪烁、死亡状态、武器多样性、时间、击杀数、秘密数
+- 真实奖励：击杀 +1.0、秘密 +1.0、受伤 -0.05、死亡 -1.0
+- 网络：15→64→32→14（之前 4→64→32→14）
+
+### AI v2.1：卡墙检测 + 弹药感知 (提交 `79b80c7`)
+
+**问题：** AI 仍然打光弹药后撞墙。无法判断行动是否有效。
+
+**新增：**
+- `getPlayerX()`、`getPlayerY()` JNI — 地图坐标通过 `mo->x/y >> FRACBITS`
+- `hasAmmoForCurrentWeapon()` JNI — 检查 `weaponinfo[readyweapon].ammo`
+- 卡墙检测器：跟踪位置变化，10+ 次前进移动但位置不变时标记
+- 新特征：state[15]=是否卡墙，state[16]=是否有弹药
+- 网络：17→64→32→14
+- 开火奖励重设计：无弹药开火 -0.05，杀敌开火 +0.02（之前盲目 +0.01）
+- 卡墙惩罚：-0.10（强信号促进行为改变）
+
+### AI 现在能看到的（共 22 个 JNI 函数）
+
+| 类别 | 函数 |
+|----------|-----------|
+| 生命/护甲 | `getPlayerHealth`、`getPlayerArmor` |
+| 位置 | `getPlayerX`、`getPlayerY`、`getPlayerAngle` |
+| 弹药 | `getAmmoBullets/Shells/Rockets/Cells` + 4 个最大值变体 |
+| 武器 | `getCurrentWeapon`、`getWeaponsOwned`、`hasAmmoForCurrentWeapon` |
+| 统计 | `getKillCount`、`getItemCount`、`getSecretCount` |
+| 状态 | `isPlayerDead`、`getDamageCount`、`hasBackpack`、`hasGodMode` |
+
+### 已知限制（v2.1）
+
+- **无敌人检测**：AI 看不到怪物（需要 JNI 遍历 `thinkercap` 查找 mobj_t）
+- **无地图几何**：AI 不知道房间布局 — 依赖卡墙检测作为代理
+- **无视距检测**：无法判断开火命中与否（仅从 killDelta 推断）
+- **状态瞬时**：无帧历史（可通过堆叠最近 N 个状态改进）

@@ -346,3 +346,49 @@ The `-DENABLE_SDL2_MIXER=OFF` flag was originally added to avoid an autotools `s
 | **Root Cause** | `-DENABLE_SDL2_MIXER=OFF` → `DISABLE_SDL2MIXER=1` → entire `i_sdlsound.c` excluded → only PC speaker sound (silent on Android) |
 | **Fix** | `-DENABLE_SDL2_MIXER=ON` + pass SDL2_mixer cmake variables directly |
 | **Commit** | `b906842` |
+
+---
+
+## AI Controller — JNI Game State Bridge (2026-07-06)
+
+### AI v2.0: Real DOOM State (commit `bb15830`)
+
+**Before (v1.0):** AI used 4 self-tracked heuristic features — time alive, recently-fired flag, recently-used flag, movement direction encoding. Completely blind to actual game state. Fired randomly, walked into walls, couldn't learn.
+
+**Added:**
+- `native/jni_game_state.c`: 19 JNI functions reading `players[consoleplayer]` directly
+- `GameState.java`: Native method declarations
+- 15 real features: health, armor, 4 ammo types, current weapon, weapons bitmask, backpack, god mode, damage flash, death state, weapon diversity, time, kills, secrets
+- Real reward: +1.0/kill, +1.0/secret, -0.05/hit, -1.0/death
+- Network: 15→64→32→14 (was 4→64→32→14)
+
+### AI v2.1: Stuck Detection + Ammo Awareness (commit `79b80c7`)
+
+**Problem:** AI still fired until empty and walked into walls. Couldn't tell if actions were effective.
+
+**Added:**
+- `getPlayerX()`, `getPlayerY()` JNI — map coordinates via `mo->x/y >> FRACBITS`
+- `hasAmmoForCurrentWeapon()` JNI — checks `weaponinfo[readyweapon].ammo`
+- Stuck detector: tracks position across steps, raises flag after 10+ FWD actions with zero movement
+- New features: state[15]=is_stuck, state[16]=has_ammo
+- Network: 17→64→32→14
+- Fire reward overhaul: -0.05 for no-ammo fire, +0.02 for fire-that-kills (was blind +0.01)
+- Stuck penalty: -0.10 (strong signal to change behavior)
+
+### What the AI can now see (22 JNI functions total)
+
+| Category | Functions |
+|----------|-----------|
+| Health/Armor | `getPlayerHealth`, `getPlayerArmor` |
+| Position | `getPlayerX`, `getPlayerY`, `getPlayerAngle` |
+| Ammo | `getAmmoBullets/Shells/Rockets/Cells` + 4 max variants |
+| Weapon | `getCurrentWeapon`, `getWeaponsOwned`, `hasAmmoForCurrentWeapon` |
+| Stats | `getKillCount`, `getItemCount`, `getSecretCount` |
+| Status | `isPlayerDead`, `getDamageCount`, `hasBackpack`, `hasGodMode` |
+
+### Known limitations (v2.1)
+
+- **No enemy detection**: AI can't see monsters (needs JNI iteration over `thinkercap` for mobj_t)
+- **No map geometry**: AI doesn't know room layout — relies on stuck-detection as proxy
+- **No line-of-sight**: Can't tell if fire action hit or missed (only infers from killDelta)
+- **State is instant**: No frame history (could benefit from stacking last N states)
