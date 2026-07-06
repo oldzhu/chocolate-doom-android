@@ -351,7 +351,16 @@ The `-DENABLE_SDL2_MIXER=OFF` flag was originally added to avoid an autotools `s
 
 ## AI Controller — JNI Game State Bridge (2026-07-06)
 
-### AI v2.0: Real DOOM State (commit `bb15830`)
+### Timeline
+
+| Version | Commit | Key Change |
+|---------|--------|------------|
+| v1.0 | — | 4 heuristic features, blind agent |
+| v2.0 | `bb15830` | 15 real game-state features via JNI (health, ammo, weapons, kills) |
+| v2.1 | `79b80c7` | Stuck detection feature + no-ammo penalty + position JNI |
+| v2.2 | `ab46902` | **Forced stuck recovery** — override DQN action when wall-stuck, continuous stuck feature |
+
+### AI v2.0: Real DOOM State (`bb15830`)
 
 **Before (v1.0):** AI used 4 self-tracked heuristic features — time alive, recently-fired flag, recently-used flag, movement direction encoding. Completely blind to actual game state. Fired randomly, walked into walls, couldn't learn.
 
@@ -362,18 +371,38 @@ The `-DENABLE_SDL2_MIXER=OFF` flag was originally added to avoid an autotools `s
 - Real reward: +1.0/kill, +1.0/secret, -0.05/hit, -1.0/death
 - Network: 15→64→32→14 (was 4→64→32→14)
 
-### AI v2.1: Stuck Detection + Ammo Awareness (commit `79b80c7`)
+### AI v2.1: Stuck Detection + Ammo Awareness (`79b80c7`)
 
 **Problem:** AI still fired until empty and walked into walls. Couldn't tell if actions were effective.
 
 **Added:**
 - `getPlayerX()`, `getPlayerY()` JNI — map coordinates via `mo->x/y >> FRACBITS`
 - `hasAmmoForCurrentWeapon()` JNI — checks `weaponinfo[readyweapon].ammo`
-- Stuck detector: tracks position across steps, raises flag after 10+ FWD actions with zero movement
-- New features: state[15]=is_stuck, state[16]=has_ammo
+- Stuck detector: tracks position, raises binary flag after 10+ FWD actions with zero movement
+- New features: state[15]=is_stuck (binary), state[16]=has_ammo
 - Network: 17→64→32→14
 - Fire reward overhaul: -0.05 for no-ammo fire, +0.02 for fire-that-kills (was blind +0.01)
-- Stuck penalty: -0.10 (strong signal to change behavior)
+- Stuck penalty: -0.10
+
+**Problem (post test):** Epsilon=1.0 means 93% random actions. AI kept choosing FWD into walls despite stuck penalty. DQN takes ~10K steps before penalty signals propagate. Stuck detector only counted movement actions — FIRE/NOOP at a wall didn't increment counter.
+
+### AI v2.2: Forced Stuck Recovery (`ab46902`)
+
+**Key insight:** Stuck penalties only work AFTER the network has learned. During exploration (epsilon ~1.0), the DQN ignores its own Q-values. The fix must be pre-learned: physically force the AI to turn when stuck.
+
+**Changes:**
+- **Stuck detection on ALL steps** (not just movement actions) — counter grows even during FIRE/NOOP at a wall
+- **Continuous stuck feature**: state[15] = `stuckCounter / STUCK_RECOVERY` (was binary 0/1)
+- **Threshold lowered**: 10 → 5 steps (~0.57 seconds at 8.75 Hz)
+- **Forced stuck recovery**: when `stuckCounter >= 5`, **bypass DQN** and force random turn/strafe:
+  ```java
+  int[] turnActions = {3, 4, 5, 6}; // LEFT, RIGHT, STRAFEL, STRAFER
+  action = turnActions[rng.nextInt(turnActions.length)];
+  ```
+- Once position changes, `stuckCounter` resets to 0 — normal DQN resumes
+- **Continuous penalty**: `-curr[15] * 0.15` (was flat `-0.10`)
+
+**Result:** AI cannot stay stuck against walls for more than ~0.6 seconds, regardless of network training state.
 
 ### What the AI can now see (22 JNI functions total)
 
