@@ -420,44 +420,42 @@ public class AIController {
             try {
                 if (retry > 0) {
                     Log.i(TAG, "  Retry #" + retry + " — waiting before re-attempt...");
-                    Thread.sleep(2000);
+                    Thread.sleep(3000);
                 }
 
-                // 1. Reset to a known state: press ESC 3× to exit any nested menus
-                //    back to the game/title screen.
+                // 1. Reset: ESC×3 to exit all nested menus → back to game/title
                 for (int i = 0; i < 3; i++) {
-                    injectKey(111, 100);   // ESC
-                    Thread.sleep(200);
+                    injectKey(111, 150);
+                    Thread.sleep(300);
                 }
-                Thread.sleep(500);
-
-                // 2. "Press any key" at title screen → shows main menu
-                injectKey(66, 150);    // ENTER
                 Thread.sleep(800);
 
-                // 2. Press Enter to select "New Game"
-                //    On the main menu, "New Game" is the first item (default highlight)
-                injectKey(66, 150);    // ENTER
-                Thread.sleep(1000);    // Longer wait for episode select screen to appear
+                // 2. "Press any key" at title → main menu (OPPO: long delay)
+                injectKey(66, 150);
+                Thread.sleep(1200);
 
-                // 3. Select episode: press DOWN (episode-1) times, then Enter
+                // 3. Enter → select "New Game" (first item, default highlighted)
+                injectKey(66, 150);
+                Thread.sleep(1500);  // Wait for episode select screen
+
+                // 4. Select episode: DOWN×(episode-1) then Enter
                 for (int i = 1; i < episode; i++) {
-                    injectKey(20, 120);  // DOWN
-                    Thread.sleep(200);
+                    injectKey(20, 150);
+                    Thread.sleep(300);
                 }
-                injectKey(66, 150);    // ENTER to confirm episode
-                Thread.sleep(1000);    // Wait for skill select screen
+                injectKey(66, 150);
+                Thread.sleep(1500);  // Wait for skill select screen
 
-                // 4. Select skill: press DOWN (skill) times, then Enter
+                // 5. Select skill: DOWN×skill then Enter
                 for (int i = 0; i < skill; i++) {
-                    injectKey(20, 120);  // DOWN
-                    Thread.sleep(200);
+                    injectKey(20, 150);
+                    Thread.sleep(300);
                 }
-                injectKey(66, 150);    // ENTER to confirm skill
-                Thread.sleep(3000);    // Wait for level to load (longer for slow devices)
+                injectKey(66, 150);
+                Thread.sleep(4000);  // Wait for level to load (OPPO needs extra time)
 
-                // 5. Verify game started by checking health after a moment
-                Thread.sleep(1000);
+                // 6. Verify game started
+                Thread.sleep(1500);
                 try {
                     int health = GameState.getPlayerHealth();
                     if (health > 0) {
@@ -465,10 +463,10 @@ public class AIController {
                                 + " health=" + health);
                         return true;
                     }
-                    Log.w(TAG, "Game may not have started (health=" + health + "), retrying...");
+                    Log.w(TAG, "Health=" + health + " — game not started, retrying...");
                 } catch (Exception e) {
-                    Log.w(TAG, "JNI check failed, assuming game started");
-                    return true; // JNI not ready yet, proceed anyway
+                    Log.w(TAG, "JNI check failed, game may not be ready — retrying...");
+                    // Do NOT return true — retry instead
                 }
 
             } catch (InterruptedException e) {
