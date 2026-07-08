@@ -217,23 +217,26 @@ public class AIController {
     // ── IDLE: waiting for game to start ──
 
     private void loopIdle() throws InterruptedException {
-        // Auto-start timeout reached?
         long elapsed = System.currentTimeMillis() - stateEnterTime;
         if (elapsed >= AUTO_START_TIMEOUT_MS) {
-            // Pick random episode (1-4) and skill (2=HMP, 3=UV) for variety
             currentEpisode = 1 + rng.nextInt(4);
-            currentSkill = 2 + rng.nextInt(2);  // HMP or UV only (not ITYTD/HNTR for challenge, not NM to avoid cheat block)
-            startNewGame(currentEpisode, currentSkill);
+            currentSkill = 2 + rng.nextInt(2);
+            boolean started = startNewGame(currentEpisode, currentSkill);
             episodeCount++;
-            autoPlayState = AP_PLAYING;
-            stateEnterTime = System.currentTimeMillis();
-            startTime = System.currentTimeMillis();
-            Log.i(TAG, "Auto-start: episode " + currentEpisode + " skill " + currentSkill
-                    + " (episode #" + episodeCount + ")");
+
+            if (started) {
+                autoPlayState = AP_PLAYING;
+                stateEnterTime = System.currentTimeMillis();
+                startTime = System.currentTimeMillis();
+                Log.i(TAG, "Auto-start: episode " + currentEpisode + " skill " + currentSkill
+                        + " (episode #" + episodeCount + ")");
+            } else {
+                // Failed to start — reset timer and try again in 5s
+                Log.w(TAG, "Auto-start failed, will retry in 5s...");
+                stateEnterTime = System.currentTimeMillis();
+            }
             return;
         }
-
-        // Still waiting — do a NOOP
         executeAction(0);
     }
 
@@ -420,14 +423,17 @@ public class AIController {
                     Thread.sleep(2000);
                 }
 
-                // 1. Ensure we're at the main menu.
-                //    ESC toggles the menu: if open → closes it; if closed → opens it.
-                //    Strategy: press ESC to close any menu → press Enter at title screen
-                //    ("press any key" shows main menu) → then Enter for "New Game".
-                injectKey(111, 150);   // ESC — close any open menu/submenu
-                Thread.sleep(400);
-                injectKey(66, 150);    // ENTER — at title screen, this shows main menu
-                Thread.sleep(600);
+                // 1. Reset to a known state: press ESC 3× to exit any nested menus
+                //    back to the game/title screen.
+                for (int i = 0; i < 3; i++) {
+                    injectKey(111, 100);   // ESC
+                    Thread.sleep(200);
+                }
+                Thread.sleep(500);
+
+                // 2. "Press any key" at title screen → shows main menu
+                injectKey(66, 150);    // ENTER
+                Thread.sleep(800);
 
                 // 2. Press Enter to select "New Game"
                 //    On the main menu, "New Game" is the first item (default highlight)
