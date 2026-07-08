@@ -305,6 +305,11 @@ public class AIController {
 
         notifyStep();
 
+        // Safety: periodically cancel any quit dialog (every ~30s / 260 steps)
+        if (totalSteps > 0 && totalSteps % 260 == 0) {
+            cancelQuitDialog();
+        }
+
         // Periodic model save (every 60s)
         long now = System.currentTimeMillis();
         if (now - lastModelSave > MODEL_SAVE_INTERVAL_MS) {
@@ -381,6 +386,16 @@ public class AIController {
     }
 
     /**
+     * Cancel any quit-confirmation dialog ("Press Y to quit").
+     * Safe to call anytime — 'N' is a no-op in normal gameplay.
+     * Keycode 49 = KEYCODE_N.
+     */
+    private void cancelQuitDialog() {
+        injectKey(49, 80);  // Press 'N' to cancel quit prompt
+        try { Thread.sleep(200); } catch (InterruptedException e) {}
+    }
+
+    /**
      * Navigate DOOM menus to start a new game at given episode and skill.
      * Works from title screen, demo loop, or any menu state.
      *
@@ -393,6 +408,9 @@ public class AIController {
     private boolean startNewGame(int episode, int skill) {
         Log.i(TAG, "Starting new game: episode=" + episode + " skill=" + skill);
         releaseAllKeys();
+
+        // Cancel any quit confirmation dialog that might be open
+        cancelQuitDialog();
 
         int maxRetries = 3;
         for (int retry = 0; retry < maxRetries; retry++) {
