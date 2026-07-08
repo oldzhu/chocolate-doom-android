@@ -421,3 +421,109 @@ The `-DENABLE_SDL2_MIXER=OFF` flag was originally added to avoid an autotools `s
 - **No map geometry**: AI doesn't know room layout — relies on stuck-detection as proxy
 - **No line-of-sight**: Can't tell if fire action hit or missed (only infers from killDelta)
 - **State is instant**: No frame history (could benefit from stacking last N states)
+
+---
+
+## DQN Stuck & No-Progress — 5-Fix Overhaul (2026-07-07)
+
+**Problem:** DQN agent stopped progressing — stood still, walked into walls, fired blindly. Despite JNI game-state bridge (v2.x), agent failed to learn effective behavior.
+
+**Analysis doc:** `docs/en/dqn-stuck-analysis.md` + `docs/zh/dqn-stuck-analysis.md`
+
+### Fix 1: True Mini-Batch Gradient Accumulation
+
+|| Aspect | Detail |
+||--------|--------|
+|| **Before** | 32 samples trained one-by-one — weight updates from sample N overwrote samples 1..N-1. Effective batch size = 1. |
+|| **Root Cause** | `NeuralNet.train()` did forward → backward → weight update in one shot. Called 32 times in a loop. |
+|| **Fix** | Added gradient accumulation: `zeroGradients()` → 32× `train()` (accumulate only) → `applyGradients(batchSize)` (apply averaged once). |
+|| **Files** | `NeuralNet.java` (+`accumGradW`/`accumGradB` fields, `zeroGradients()`, `applyGradients()`); `DQNPlayer.java` (wired up batch loop) |
+
+### Fix 2: True Double DQN
+
+|| Aspect | Detail |
+||--------|--------|
+|| **Before** | Standard DQN: `targetQ = r + γ · max(targetNet.forward(s'))` — same network selects & evaluates. Overestimation bias. |
+|| **Root Cause** | `max()` operator picks highest Q-value, more likely overestimated than underestimated. |
+|| **Fix** | Double DQN: `bestAction = argmax(onlineNet.forward(s'))` then `targetQ = r + γ · targetNet.forward(s')[bestAction]`. Online selects, target evaluates. |
+|| **Files** | `DQNPlayer.java` (step() method) |
+
+### Fix 3: Stuck Detection — Movement Actions Only
+
+|| Aspect | Detail |
+||--------|--------|
+|| **Before** | `stuckCounter` incremented on ALL actions (FIRE, USE, weapon switch, NOOP) when position unchanged. Interrupted combat. |
+|| **Root Cause** | Position check had no action-type guard. |
+|| **Fix** | Only increment counter when `prevAction ∈ {1..6}` (movement actions: FWD..STRAFER). FIRE/USE/weapon-switch/NOOP don't count. Reset on any position change. |
+|| **Files** | `AIController.java` (extractState()) |
+
+### Fix 4: Reward Balance
+
+|| Aspect | Before | After | Reason |
+||--------|--------|-------|--------|
+|| Alive bonus | +0.01/step | +0.003/step | Was too large — passive agent earned net-positive reward by doing nothing |
+|| Stuck penalty | -0.15 × stuckLevel | -0.20 × stuckLevel | Needed stronger disincentive to escape walls |
+|| NOOP penalty | -0.005 | -0.01 | Standing still should be net-negative |
+|| Exploration | None | +0.002 per position change | Encourages movement |
+
+**Files:** `AIController.java` (calculateReward())
+
+### Fix 5: Time Feature Saturation
+
+|| Aspect | Detail |
+||--------|--------|
+|| **Before** | `state[12] = elapsed / 600f` — saturates after 10 minutes. Nearly 0 for all states in early game. |
+|| **Fix** | `state[12] = elapsed / 120f` — saturates after 2 minutes. |
+|| **Files** | `AIController.java` (extractState()) |
+
+---
+
+## Backprop Bug Fix + JNI Rebuild — Runtime Crash Resolution (2026-07-08)
+
+### Bug: ArrayIndexOutOfBounds in NeuralNet.backward()
+
+|| Aspect | Detail |
+||--------|--------|
+|| **Symptom** | `AI loop error: ArrayIndexOutOfBoundsException: length=14; index=14` on every training step. AI thread silently died. |
+|| **Root Cause** | Backprop used `weights[l]` (shape: layerSizes[l]×layerSizes[l+1]) instead of `weights[l+1]` (shape: layerSizes[l+1]×layerSizes[l+2]), and `nextSize = layerSizes[l+1]` instead of `layerSizes[l+2]`. For a 17→64→32→14 network at l=1, `nextGrad` had 14 elements but the loop iterated 32 times. |
+|| **Pre-existing** | This bug existed in the ORIGINAL code. It was silently caught by `catch(Exception)` in `aiLoop()`, making the AI appear "stuck" when it was actually crashing. |
+|| **Fix** | Rewrote backward pass: use `weights[l+1]`, stride `layerSizes[l+2]`, grad size `layerSizes[l+1]`. Verified against chain rule: dL/dz[l+1] = ReLU'(z[l+1]) ⊙ (W[l+1]^T · dL/dz[l+2]). |
+|| **Files** | `NeuralNet.java` (backprop loop) |
+
+### Bug: JNI Symbols Missing from libmain.so
+
+|| Aspect | Detail |
+||--------|--------|
+|| **Symptom** | `UnsatisfiedLinkError: No implementation found for GameState.getPlayerHealth()` when AI enabled |
+|| **Root Cause** | The pre-built `libmain.so` at `apk/jniLibs/` lacked `jni_game_state.o` — 0 JNI symbols found |
+|| **Fix** | Recompiled `jni_game_state.c` and relinked `libdoom.so` with `jni_game_state.o`. Verified 23 JNI symbols via `llvm-nm -D`. |
+|| **Files** | `libmain.so` (rebuild via jni_game_state.c + relink) |
+
+---
+
+## Auto-Play — Autonomous Training Loop (2026-07-08)
+
+**Feature:** AI can now train autonomously — auto-start games, detect death, restart same level, save model periodically. Enables overnight training without human intervention.
+
+### State Machine
+
+| State | Behavior |
+|-------|----------|
+| **IDLE** | After 🤖 tapped, waits 5s. If user doesn't start a game, picks random episode (1-4) + random skill (HMP/UV) and auto-navigates the DOOM menus to start. |
+| **PLAYING** | Normal DQN loop: observe → act → learn. Settle period (1.5s) on first entry to prevent interference with level load. Saves model every 60s. |
+| **DEAD** | Detects death via JNI. Stores terminal transition. Waits 2s for death animation, presses Space (skip death screen), presses Enter (skip intermission). Transitions to RESTART after 5s. |
+| **RESTART** | Waits 5s, then starts new game at **same episode + same skill** for consistent learning. Resets all step counters. |
+
+### Key Behaviors
+
+- **Menu navigation**: ESC → Enter (New Game) → arrows + Enter (episode) → arrows + Enter (skill). Verified with health>0 confirmation. Retries up to 3 times.
+- **Random variety**: Picks episode 1-4 and skill HMP/UV randomly on initial auto-start (not NM due to cheat-block patch interaction)
+- **Consistent restarts**: Death → same episode + same skill (not random) to build skill on specific levels
+- **Model persistence**: `dqn_model.bin` saved to app internal storage every 60s
+- **Robust timing**: Long delays (800-3000ms) between menu steps to handle slow OPPO rendering
+
+### Files Changed
+
+| File | Changes |
+|------|---------|
+| `AIController.java` | +auto-play state machine (AP_IDLE/PLAYING/DEAD/RESTART), +`loopIdle()`/`loopPlaying()`/`loopDead()`/`loopRestart()`, +`startNewGame()` with retry+health verification, +`injectKey()`, +`saveModelToFile()`, +settle period guard |

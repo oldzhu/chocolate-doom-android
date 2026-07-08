@@ -421,3 +421,109 @@ nm -D libdoom.so | grep "sound_sdl_module"
 - **无地图几何**：AI 不知道房间布局 — 依赖卡墙检测作为代理
 - **无视距检测**：无法判断开火命中与否（仅从 killDelta 推断）
 - **状态瞬时**：无帧历史（可通过堆叠最近 N 个状态改进）
+
+---
+
+## DQN 卡死与无进展 — 五项修复大修 (2026-07-07)
+
+**问题：** DQN agent 停止进步——站着不动、撞墙、乱开枪。尽管有 JNI 游戏状态桥接（v2.x），agent 仍无法学会有效行为。
+
+**分析文档：** `docs/en/dqn-stuck-analysis.md` + `docs/zh/dqn-stuck-analysis.md`
+
+### 修复1：真正的 Mini-Batch 梯度累积
+
+|| 方面 | 详情 |
+||------|------|
+|| **之前** | 32 条样本逐条训练——第 N 条样本的权重更新覆盖前 N-1 条的。实际 batch size = 1。 |
+|| **根因** | `NeuralNet.train()` 一次性完成 forward → backward → 权重更新。在循环中被调用 32 次。 |
+|| **修复** | 添加梯度累积：`zeroGradients()` → 32× `train()`（仅累积）→ `applyGradients(batchSize)`（一次性应用平均值）。 |
+|| **文件** | `NeuralNet.java`（新增 `accumGradW`/`accumGradB` 字段、`zeroGradients()`、`applyGradients()`）；`DQNPlayer.java`（接入 batch 循环） |
+
+### 修复2：真正的 Double DQN
+
+|| 方面 | 详情 |
+||------|------|
+|| **之前** | 标准 DQN：`targetQ = r + γ · max(targetNet.forward(s'))` — 同一个网络既选动作又估值。高估偏差。 |
+|| **根因** | `max()` 运算符挑最高 Q 值，被选中的更可能是被高估的动作。 |
+|| **修复** | Double DQN：`bestAction = argmax(onlineNet.forward(s'))` 然后 `targetQ = r + γ · targetNet.forward(s')[bestAction]`。Online 选动作，target 估值。 |
+|| **文件** | `DQNPlayer.java`（step() 方法） |
+
+### 修复3：Stuck 检测 — 仅移动动作
+
+|| 方面 | 详情 |
+||------|------|
+|| **之前** | `stuckCounter` 对所有动作（FIRE、USE、换武器、NOOP）位置不变时都累加。打断战斗。 |
+|| **根因** | 位置检查无动作类型守卫。 |
+|| **修复** | 仅在 `prevAction ∈ {1..6}`（移动动作：FWD..STRAFER）时累加计数器。FIRE/USE/换武器/NOOP 不计数。任何位置变化都重置。 |
+|| **文件** | `AIController.java`（extractState()） |
+
+### 修复4：奖励平衡
+
+|| 方面 | 之前 | 之后 | 原因 |
+||------|------|------|------|
+|| 存活奖励 | +0.01/步 | +0.003/步 | 太大——消极 agent 什么都不做也能净赚 |
+|| Stuck 惩罚 | -0.15 × stuckLevel | -0.20 × stuckLevel | 需要更强的脱离墙壁激励 |
+|| NOOP 惩罚 | -0.005 | -0.01 | 站着不动应该净收益为负 |
+|| 探索奖励 | 无 | +0.002/位置变化 | 鼓励移动 |
+
+**文件：** `AIController.java`（calculateReward()）
+
+### 修复5：时间特征饱和
+
+|| 方面 | 详情 |
+||------|------|
+||| **之前** | `state[12] = elapsed / 600f` — 10 分钟才饱和。游戏早期所有状态下都接近 0。 |
+||| **修复** | `state[12] = elapsed / 120f` — 2 分钟饱和。 |
+||| **文件** | `AIController.java`（extractState()） |
+
+---
+
+## 反向传播 Bug 修复 + JNI 重编译 — 运行时崩溃解决 (2026-07-08)
+
+### Bug: NeuralNet.backward() 数组越界
+
+||| 方面 | 详情 |
+|||------|------|
+||| **症状** | 每次训练步都报 `AI loop error: ArrayIndexOutOfBoundsException: length=14; index=14`，AI 线程静默死亡。 |
+||| **根因** | 反向传播使用了 `weights[l]`（形状：layerSizes[l]×layerSizes[l+1]）而非 `weights[l+1]`（形状：layerSizes[l+1]×layerSizes[l+2]），且 `nextSize = layerSizes[l+1]` 应为 `layerSizes[l+2]`。17→64→32→14 网络中，当 l=1 时，`nextGrad` 仅有 14 个元素但循环迭代 32 次。 |
+||| **遗留 Bug** | 此 Bug 存在于原始代码中，被 `catch(Exception)` 静默吞掉，让 AI 看似"卡死"，实则一直在崩溃。 |
+||| **修复** | 重写反向传播：使用 `weights[l+1]`，步长 `layerSizes[l+2]`，梯度大小 `layerSizes[l+1]`。按链式法则验证：dL/dz[l+1] = ReLU'(z[l+1]) ⊙ (W[l+1]^T · dL/dz[l+2])。 |
+||| **文件** | `NeuralNet.java`（backprop 循环） |
+
+### Bug: libmain.so 缺少 JNI 符号
+
+||| 方面 | 详情 |
+|||------|------|
+||| **症状** | `UnsatisfiedLinkError: No implementation found for GameState.getPlayerHealth()` |
+||| **根因** | 预编译的 `libmain.so` 缺少 `jni_game_state.o` — 0 个 JNI 符号 |
+||| **修复** | 重新编译 `jni_game_state.c` 并重链接 `libdoom.so`。通过 `llvm-nm -D` 验证 23 个 JNI 符号。 |
+||| **文件** | `libmain.so`（通过 jni_game_state.c + 重链接重建） |
+
+---
+
+## 自动训练循环 — 自主学习 (2026-07-08)
+
+**功能：** AI 可自主训练——自动开局、检测死亡、同关卡重开、定时保存模型。无需人工干预即可通宵训练。
+
+### 状态机
+
+| 状态 | 行为 |
+|------|------|
+| **IDLE** | 点击 🤖 后等待 5 秒。若用户未手动开局，随机选择关卡 (1-4) + 随机难度 (HMP/UV)，自动操作 DOOM 菜单开局。 |
+| **PLAYING** | 正常 DQN 循环：观察 → 行动 → 学习。首次进入时静置 1.5s 避免干扰关卡加载。每 60s 保存模型。 |
+| **DEAD** | 通过 JNI 检测死亡。存储终结转移。等待 2s 死亡动画，按空格跳过死亡画面，按回车跳过结算画面。5s 后转入 RESTART。 |
+| **RESTART** | 等待 5s，以**相同关卡 + 相同难度**重开，保持学习一致性。重置所有步数计数器。 |
+
+### 关键设计
+
+- **菜单导航**：ESC → Enter（新游戏）→ 方向键 + Enter（选关）→ 方向键 + Enter（选难度）。通过 health>0 验证生效。最多重试 3 次。
+- **随机变化**：初次自动开局时随机选择 1-4 关 + HMP/UV 难度（不选 NM，避免与作弊补丁交互）
+- **一致重开**：死亡 → 同关卡同难度（不随机），以针对性提升
+- **模型持久化**：每 60s 保存 `dqn_model.bin` 到应用内部存储
+- **稳健时序**：菜单步骤间隔 800-3000ms，适配慢速 OPPO 渲染
+
+### 文件变更
+
+| 文件 | 变更 |
+|------|------|
+| `AIController.java` | +自动训练状态机（AP_IDLE/PLAYING/DEAD/RESTART），+`loopIdle()`/`loopPlaying()`/`loopDead()`/`loopRestart()`，+带重试和生命值验证的 `startNewGame()`，+`injectKey()`，+`saveModelToFile()`，+静置期守卫 |

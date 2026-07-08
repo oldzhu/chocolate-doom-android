@@ -127,7 +127,8 @@ public class DQNPlayer {
         if (replaySize < batchSize) return;
         if (stepCount % trainFrequency != 0) return;
 
-        // Sample random batch
+        // Sample random batch with gradient accumulation (true mini-batch SGD)
+        onlineNet.zeroGradients();
         for (int b = 0; b < batchSize; b++) {
             int idx = rng.nextInt(replaySize);
 
@@ -137,13 +138,16 @@ public class DQNPlayer {
             float reward = replayRewards[idx];
             boolean done = replayDones[idx];
 
-            // Compute Bellman target: Q_target = r + gamma * max_a Q_target(s', a)
+            // Compute Bellman target (Double DQN: online selects action, target evaluates)
             float targetQ;
             if (done) {
                 targetQ = reward;
             } else {
-                float[] nextQ = targetNet.forward(nextState);
-                targetQ = reward + gamma * max(nextQ);
+                // Double DQN: argmax over online Q, value from target Q for that action
+                float[] nextQ_online = onlineNet.forward(nextState);
+                int bestAction = argmax(nextQ_online);
+                float[] nextQ_target = targetNet.forward(nextState);
+                targetQ = reward + gamma * nextQ_target[bestAction];
             }
 
             // Get current Q-values and set target for the chosen action
@@ -155,8 +159,9 @@ public class DQNPlayer {
             boolean[] mask = new boolean[numActions];
             mask[action] = true;
 
-            onlineNet.train(state, targetVec, mask);
+            onlineNet.train(state, targetVec, mask);  // accumulates gradients
         }
+        onlineNet.applyGradients(batchSize);  // apply averaged gradients once
 
         // Periodically sync target network
         if (stepCount % targetSyncFrequency == 0) {

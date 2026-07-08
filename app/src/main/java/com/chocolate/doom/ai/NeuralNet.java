@@ -27,6 +27,11 @@ public class NeuralNet {
     private float momentum = 0.9f;
     private float l2Reg = 0.0001f;
 
+    // ── Gradient accumulation buffers (for mini-batch SGD) ──
+    private final float[][] accumGradW;  // accumulated weight gradients
+    private final float[][] accumGradB;  // accumulated bias gradients
+    private int accumCount = 0;
+
     /**
      * @param layerSizes e.g. {13, 128, 64, 14} for 13 input → 128 → 64 → 14 actions
      */
@@ -38,6 +43,8 @@ public class NeuralNet {
         biases = new float[numLayers][];
         momentumW = new float[numLayers][];
         momentumB = new float[numLayers][];
+        accumGradW = new float[numLayers][];
+        accumGradB = new float[numLayers][];
         activations = new float[layerSizes.length][];
         zValues = new float[layerSizes.length][];
 
@@ -48,6 +55,8 @@ public class NeuralNet {
             biases[l] = new float[outSize];
             momentumW[l] = new float[inSize * outSize];
             momentumB[l] = new float[outSize];
+            accumGradW[l] = new float[inSize * outSize];
+            accumGradB[l] = new float[outSize];
             activations[l] = new float[inSize];   // l=0 is input
             zValues[l + 1] = new float[outSize];
         }
@@ -114,7 +123,19 @@ public class NeuralNet {
     // ──────── Training ────────
 
     /**
-     * Single training step: forward → compute loss → backward → update weights.
+     * Zero gradient accumulators. Call before a batch training loop.
+     */
+    public void zeroGradients() {
+        accumCount = 0;
+        for (int l = 0; l < weights.length; l++) {
+            java.util.Arrays.fill(accumGradW[l], 0f);
+            java.util.Arrays.fill(accumGradB[l], 0f);
+        }
+    }
+
+    /**
+     * Single training step: forward → compute loss → backward → ACCUMULATE gradients.
+     * Does NOT apply gradients — call {@link #applyGradients} after batch accumulation.
      * Uses Huber loss for RL stability (smooth L1).
      *
      * @param input   state features
@@ -145,71 +166,98 @@ public class NeuralNet {
         if (masked == 0) return; // nothing to train
 
         // Backpropagate through hidden layers
+        // layerGrads[l] = dL/dz[l+1], size = layerSizes[l+1]
+        // To compute layerGrads[l] from layerGrads[l+1]:
+        //   dL/dz[l+1][i] = ReLU'(z[l+1][i]) * sum_j W[l+1][i][j] * dL/dz[l+2][j]
         float[][] layerGrads = new float[weights.length][];
         layerGrads[lastLayer] = outputGrad;
 
         for (int l = lastLayer - 1; l >= 0; l--) {
-            int inSize = layerSizes[l];
-            int nextSize = layerSizes[l + 1];
-            float[] nextGrad = layerGrads[l + 1];
-            float[] w = weights[l];
-            float[] z = zValues[l + 1];
+            int prevOutSz = layerSizes[l + 2];     // size of nextGrad (= dL/dz[l+2])
+            float[] nextGrad = layerGrads[l + 1];   // dL/dz[l+2]
+            float[] w_next = weights[l + 1];         // W[l+1], shape: layerSizes[l+1] × layerSizes[l+2]
+            int inSize = layerSizes[l + 1];          // number of neurons in layer l+1
             float[] grad = new float[inSize];
 
-            // grad[i] = sum_j(W[i][j] * nextGrad[j]) * ReLU'(z[i]) for this layer's input
-            // Wait, the grad computed here is for the output of layer l.
-            // Actually, we need dL/d(activation of layer l) = sum_j W[i][j] * nextGrad[j]
-            // Then for the previous layer (l-1), we need dL/dz[l] = dL/da[l] * ReLU'(z[l])
-
-            // Compute dL/da[l] (gradient w.r.t. this layer's output/input to next)
+            // dL/da[l+1] = W[l+1]^T · dL/dz[l+2]
             for (int i = 0; i < inSize; i++) {
                 float sum = 0f;
-                for (int j = 0; j < nextSize; j++) {
-                    sum += w[i * nextSize + j] * nextGrad[j];
+                for (int j = 0; j < prevOutSz; j++) {
+                    sum += w_next[i * prevOutSz + j] * nextGrad[j];
                 }
                 grad[i] = sum;
             }
 
-            // For layer l (which takes input from layer l-1):
-            // dL/dz[l] = dL/da[l] * ReLU'(z[l])
+            // Apply ReLU'(z[l+1]) — skip for input layer neurons
             if (l > 0) {
-                // layer l has zValues[l] (pre-activation for layer l's output)
-                float[] zPrev = zValues[l];
+                float[] z = zValues[l + 1];
                 for (int i = 0; i < inSize; i++) {
-                    grad[i] *= (zPrev[i] > 0 ? 1f : 0f); // ReLU derivative
+                    grad[i] *= (z[i] > 0 ? 1f : 0f);
                 }
             }
-            // else l==0: input layer, no activation, just pass through
 
             layerGrads[l] = grad;
         }
 
-        // Update weights and biases
+        // ACCUMULATE gradients (do NOT apply weights yet)
         for (int l = 0; l < weights.length; l++) {
             int inSize = layerSizes[l];
             int outSz = layerSizes[l + 1];
-            float[] w = weights[l];
-            float[] b = biases[l];
-            float[] mw = momentumW[l];
-            float[] mb = momentumB[l];
             float[] a = activations[l];
             float[] grad = layerGrads[l]; // gradient w.r.t. z[l+1]
+            float[] agw = accumGradW[l];
+            float[] agb = accumGradB[l];
 
             for (int j = 0; j < outSz; j++) {
-                float g = grad[j] / Math.max(1f, masked); // scale by batch size proxy
-                // Bias update
-                mb[j] = momentum * mb[j] - learningRate * g;
+                float g = grad[j];
+                agb[j] += g;  // accumulate bias gradient
+
+                // Accumulate weight gradients
+                for (int i = 0; i < inSize; i++) {
+                    int idx = i * outSz + j;
+                    agw[idx] += g * a[i];
+                }
+            }
+        }
+        accumCount++;
+    }
+
+    /**
+     * Apply accumulated gradients with momentum + L2 regularization.
+     * Call after a batch of {@link #train} calls.
+     * @param batchSize number of samples accumulated (for averaging)
+     */
+    public void applyGradients(int batchSize) {
+        if (accumCount == 0) return;
+        int divisor = Math.max(1, batchSize);
+        float scale = learningRate / (float) divisor;
+
+        for (int l = 0; l < weights.length; l++) {
+            int outSz = layerSizes[l + 1];
+            int inSize = layerSizes[l];
+            float[] w = weights[l];
+            float[] b = biases[l];
+            float[] agw = accumGradW[l];
+            float[] agb = accumGradB[l];
+            float[] mw = momentumW[l];
+            float[] mb = momentumB[l];
+
+            for (int j = 0; j < outSz; j++) {
+                // Bias update with averaged gradient
+                float avgGradB = agb[j] / (float) divisor;
+                mb[j] = momentum * mb[j] - scale * agb[j];  // agb already summed
                 b[j] += mb[j] - learningRate * l2Reg * b[j];
 
-                // Weight update
                 for (int i = 0; i < inSize; i++) {
-                    int idx = i * outSize + j;
-                    float dw = g * a[i];
-                    mw[idx] = momentum * mw[idx] - learningRate * dw;
+                    int idx = i * outSz + j;
+                    float avgGradW = agw[idx] / (float) divisor;
+                    mw[idx] = momentum * mw[idx] - scale * agw[idx];
                     w[idx] += mw[idx] - learningRate * l2Reg * w[idx];
                 }
             }
         }
+
+        zeroGradients(); // reset accumulators for next batch
     }
 
     // ──────── Persistence ────────

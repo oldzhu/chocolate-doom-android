@@ -81,8 +81,30 @@ public class AIController {
     private int totalSteps = 0;
     private int totalFires = 0;
 
+    // ── Auto-play state machine ──
+    // STATE_IDLE:     AI on, waiting for user to start game (5s timeout)
+    // STATE_PLAYING:  AI actively controlling the game
+    // STATE_DEAD:     Player died, handling death screens
+    // STATE_RESTART:  Waiting before restarting
+    private static final int AP_IDLE = 0;
+    private static final int AP_PLAYING = 1;
+    private static final int AP_DEAD = 2;
+    private static final int AP_RESTART = 3;
+    private int autoPlayState = AP_IDLE;
+    private long stateEnterTime = 0;
+    private int currentEpisode = 1;
+    private int currentSkill = 3;  // 0=ITYTD, 1=HNTR, 2=HMP, 3=UV, 4=NM
+    private int episodeCount = 0;  // total episodes played
+    private int totalDeaths = 0;
+    private boolean wasDeadLastStep = false;
+    private static final long AUTO_START_TIMEOUT_MS = 5000;   // 5s before auto-start
+    private static final long DEAD_RESTART_DELAY_MS = 5000;   // 5s after death before restart
+    private long lastModelSave = 0;
+    private static final long MODEL_SAVE_INTERVAL_MS = 60000; // save model every 60s
+
     // ── Stuck detection ──
     private int prevX = 0, prevY = 0;
+    private int currX = 0, currY = 0;  // current position (for exploration bonus)
     private int stuckCounter = 0;
     private final java.util.Random rng = new java.util.Random();
     private int prevKills = 0;
@@ -123,14 +145,21 @@ public class AIController {
         totalFires = 0;
         stuckCounter = 0;
         prevX = 0; prevY = 0;
+        currX = 0; currY = 0;
         prevAction = 0;
+
+        // Auto-play: start in IDLE, wait 5s for user, then auto-start
+        autoPlayState = AP_IDLE;
+        stateEnterTime = System.currentTimeMillis();
+        wasDeadLastStep = false;
+        lastModelSave = System.currentTimeMillis();
 
         running = true;
         aiThread = new Thread(this::aiLoop, "AI-Player");
         aiThread.setPriority(Thread.MIN_PRIORITY);
         aiThread.start();
 
-        Log.i(TAG, "AI ENABLED");
+        Log.i(TAG, "AI ENABLED (auto-play ready, waiting for game start)");
         notifyStatus("🤖 AI ON");
     }
 
@@ -147,7 +176,7 @@ public class AIController {
         notifyStatus(null);
     }
 
-    // ──────── AI Loop ────────
+    // ──────── AI Loop (with auto-play state machine) ────────
 
     private void aiLoop() {
         try {
@@ -156,45 +185,23 @@ public class AIController {
             while (running && enabled) {
                 long loopStart = System.currentTimeMillis();
 
-                // 1. Observe state
-                extractState(currentState);
-
-                // 2. Compute reward from previous step
-                float reward = calculateReward(prevState, currentState, prevAction);
-
-                // 3. Store experience (if we have a previous transition)
-                if (totalSteps > 0) {
-                    dqn.storeExperience(prevState, prevAction, reward,
-                            currentState.clone(), false);
+                // ── Auto-play state machine ──
+                switch (autoPlayState) {
+                    case AP_IDLE:
+                        loopIdle();
+                        break;
+                    case AP_PLAYING:
+                        loopPlaying();
+                        break;
+                    case AP_DEAD:
+                        loopDead();
+                        break;
+                    case AP_RESTART:
+                        loopRestart();
+                        break;
                 }
 
-                // 4. Choose action (override if stuck)
-                int action;
-                if (stuckCounter >= STUCK_RECOVERY) {
-                    // Force random turn/strafe to unstick — bypass DQN
-                    int[] turnActions = {3, 4, 5, 6}; // LEFT, RIGHT, STRAFEL, STRAFER
-                    action = turnActions[rng.nextInt(turnActions.length)];
-                } else {
-                    action = dqn.chooseAction(currentState);
-                }
-
-                // 5. Execute action
-                executeAction(action);
-
-                // 6. Train
-                dqn.step();
-
-                // 7. Update tracking
-                System.arraycopy(currentState, 0, prevState, 0, STATE_SIZE);
-                prevAction = action;
-                totalSteps++;
-
-                if (action == 7) totalFires++; // FIRE action
-
-                // Update UI callback
-                notifyStep();
-
-                // 8. Sleep for frame-skip duration
+                // Sleep for frame-skip duration
                 long elapsed = System.currentTimeMillis() - loopStart;
                 long sleepTime = STEP_DELAY_MS - elapsed;
                 if (sleepTime > 0) Thread.sleep(sleepTime);
@@ -205,6 +212,263 @@ public class AIController {
             Log.e(TAG, "AI loop error", e);
         }
         running = false;
+    }
+
+    // ── IDLE: waiting for game to start ──
+
+    private void loopIdle() throws InterruptedException {
+        // Auto-start timeout reached?
+        long elapsed = System.currentTimeMillis() - stateEnterTime;
+        if (elapsed >= AUTO_START_TIMEOUT_MS) {
+            // Pick random episode (1-4) and skill (2=HMP, 3=UV) for variety
+            currentEpisode = 1 + rng.nextInt(4);
+            currentSkill = 2 + rng.nextInt(2);  // HMP or UV only (not ITYTD/HNTR for challenge, not NM to avoid cheat block)
+            startNewGame(currentEpisode, currentSkill);
+            episodeCount++;
+            autoPlayState = AP_PLAYING;
+            stateEnterTime = System.currentTimeMillis();
+            startTime = System.currentTimeMillis();
+            Log.i(TAG, "Auto-start: episode " + currentEpisode + " skill " + currentSkill
+                    + " (episode #" + episodeCount + ")");
+            return;
+        }
+
+        // Still waiting — do a NOOP
+        executeAction(0);
+    }
+
+    // ── PLAYING: normal AI loop ──
+
+    private void loopPlaying() throws InterruptedException {
+        // Settle period: skip first ~1 second after game start to let level load
+        if (totalSteps == 0) {
+            long settleElapsed = System.currentTimeMillis() - stateEnterTime;
+            if (settleElapsed < 1500) {
+                return; // just wait, don't act yet
+            }
+        }
+
+        // 1. Observe state
+        extractState(currentState);
+
+        // 2. Check for death
+        if (currentState[10] > 0.5f && !wasDeadLastStep) {
+            // Just died!
+            totalDeaths++;
+            Log.i(TAG, "Player died! (death #" + totalDeaths + ", episode #" + episodeCount
+                    + ", steps=" + totalSteps + ", kills=" + (int)(currentState[13] * 100) + ")");
+            // Store this as a terminal transition
+            if (totalSteps > 0) {
+                dqn.storeExperience(prevState, prevAction,
+                        calculateReward(prevState, currentState, prevAction),
+                        currentState.clone(), true);
+                dqn.step();
+            }
+            releaseAllKeys();
+            autoPlayState = AP_DEAD;
+            stateEnterTime = System.currentTimeMillis();
+            wasDeadLastStep = true;
+            return;
+        }
+        wasDeadLastStep = currentState[10] > 0.5f;
+
+        // 3. Compute reward from previous step
+        float reward = calculateReward(prevState, currentState, prevAction);
+
+        // 4. Store experience (if we have a previous transition)
+        if (totalSteps > 0) {
+            dqn.storeExperience(prevState, prevAction, reward,
+                    currentState.clone(), false);
+        }
+
+        // 5. Choose action (override if stuck)
+        int action;
+        if (stuckCounter >= STUCK_RECOVERY) {
+            int[] turnActions = {3, 4, 5, 6};
+            action = turnActions[rng.nextInt(turnActions.length)];
+        } else {
+            action = dqn.chooseAction(currentState);
+        }
+
+        // 6. Execute action
+        executeAction(action);
+
+        // 7. Train
+        dqn.step();
+
+        // 8. Update tracking
+        System.arraycopy(currentState, 0, prevState, 0, STATE_SIZE);
+        prevAction = action;
+        totalSteps++;
+
+        if (action == 7) totalFires++;
+
+        notifyStep();
+
+        // Periodic model save (every 60s)
+        long now = System.currentTimeMillis();
+        if (now - lastModelSave > MODEL_SAVE_INTERVAL_MS) {
+            saveModelToFile();
+            lastModelSave = now;
+        }
+    }
+
+    // ── DEAD: handling death screens ──
+
+    private void loopDead() throws InterruptedException {
+        long elapsed = System.currentTimeMillis() - stateEnterTime;
+
+        if (elapsed < 2000) {
+            // Wait for death animation to finish
+            return;
+        }
+
+        if (elapsed < 3000) {
+            // Press SPACE to advance past death screen
+            injectKey(62, 80);
+            Thread.sleep(500);
+            return;
+        }
+
+        if (elapsed < 4000) {
+            // Press ENTER to advance past intermission
+            injectKey(66, 80);
+            Thread.sleep(500);
+            return;
+        }
+
+        // Wait for title screen, then transition to restart
+        if (elapsed >= 5000) {
+            autoPlayState = AP_RESTART;
+            stateEnterTime = System.currentTimeMillis();
+        }
+    }
+
+    // ── RESTART: wait then start new game ──
+
+    private void loopRestart() throws InterruptedException {
+        long elapsed = System.currentTimeMillis() - stateEnterTime;
+
+        if (elapsed >= DEAD_RESTART_DELAY_MS) {
+            // Restart with SAME episode and skill
+            startNewGame(currentEpisode, currentSkill);
+            episodeCount++;
+            autoPlayState = AP_PLAYING;
+            stateEnterTime = System.currentTimeMillis();
+            startTime = System.currentTimeMillis();
+            totalSteps = 0;
+            totalFires = 0;
+            stuckCounter = 0;
+            prevX = 0; prevY = 0;
+            currX = 0; currY = 0;
+            prevAction = 0;
+            wasDeadLastStep = false;
+            Log.i(TAG, "Restart: episode " + currentEpisode + " skill " + currentSkill
+                    + " (episode #" + episodeCount + ", deaths=" + totalDeaths + ")");
+            return;
+        }
+    }
+
+    // ──────── Menu Navigation & Auto-Start ────────
+
+    /**
+     * Inject a single key press: keyDown → hold → keyUp.
+     */
+    private void injectKey(int keycode, int holdMs) {
+        SDLActivity.onNativeKeyDown(keycode);
+        try { Thread.sleep(holdMs); } catch (InterruptedException e) {}
+        SDLActivity.onNativeKeyUp(keycode);
+    }
+
+    /**
+     * Navigate DOOM menus to start a new game at given episode and skill.
+     * Works from title screen, demo loop, or any menu state.
+     *
+     * Menu flow: any key (title→menu) → Enter (New Game) → arrows + Enter (episode)
+     *            → arrows + Enter (skill) → game starts
+     *
+     * Uses long delays to ensure menu transitions complete on slow devices.
+     * Retries if game doesn't start within timeout.
+     */
+    private boolean startNewGame(int episode, int skill) {
+        Log.i(TAG, "Starting new game: episode=" + episode + " skill=" + skill);
+        releaseAllKeys();
+
+        int maxRetries = 3;
+        for (int retry = 0; retry < maxRetries; retry++) {
+            try {
+                if (retry > 0) {
+                    Log.i(TAG, "  Retry #" + retry + " — waiting before re-attempt...");
+                    Thread.sleep(2000);
+                }
+
+                // 1. Press ESC to break out of demo loop / ensure we're at menu
+                //    On Freedoom title screen, this shows the main menu
+                injectKey(111, 150);   // ESC
+                Thread.sleep(800);
+
+                // 2. Press Enter to select "New Game"
+                //    On the main menu, "New Game" is the first item (default highlight)
+                injectKey(66, 150);    // ENTER
+                Thread.sleep(1000);    // Longer wait for episode select screen to appear
+
+                // 3. Select episode: press DOWN (episode-1) times, then Enter
+                for (int i = 1; i < episode; i++) {
+                    injectKey(20, 120);  // DOWN
+                    Thread.sleep(200);
+                }
+                injectKey(66, 150);    // ENTER to confirm episode
+                Thread.sleep(1000);    // Wait for skill select screen
+
+                // 4. Select skill: press DOWN (skill) times, then Enter
+                for (int i = 0; i < skill; i++) {
+                    injectKey(20, 120);  // DOWN
+                    Thread.sleep(200);
+                }
+                injectKey(66, 150);    // ENTER to confirm skill
+                Thread.sleep(3000);    // Wait for level to load (longer for slow devices)
+
+                // 5. Verify game started by checking health after a moment
+                Thread.sleep(1000);
+                try {
+                    int health = GameState.getPlayerHealth();
+                    if (health > 0) {
+                        Log.i(TAG, "New game confirmed: ep=" + episode + " skill=" + skill
+                                + " health=" + health);
+                        return true;
+                    }
+                    Log.w(TAG, "Game may not have started (health=" + health + "), retrying...");
+                } catch (Exception e) {
+                    Log.w(TAG, "JNI check failed, assuming game started");
+                    return true; // JNI not ready yet, proceed anyway
+                }
+
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+
+        Log.e(TAG, "Failed to start game after " + maxRetries + " retries. Proceeding anyway.");
+        return false;
+    }
+
+    /**
+     * Save DQN model to app's internal storage.
+     * Called periodically during auto-play to preserve training progress.
+     */
+    private void saveModelToFile() {
+        try {
+            // Use a fixed path in app files dir
+            java.io.File dir = new java.io.File("/data/data/com.chocolate.doom/files/");
+            if (!dir.exists()) dir.mkdirs();
+            java.io.File modelFile = new java.io.File(dir, "dqn_model.bin");
+            dqn.saveModel(modelFile.getAbsolutePath());
+            Log.i(TAG, "Model saved: " + modelFile.getAbsolutePath()
+                    + " (steps=" + totalSteps + " ε=" + String.format("%.3f", dqn.getEpsilon()) + ")");
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to save model: " + e.getMessage());
+        }
     }
 
     // ──────── State Extraction (JNI game state v2.0) ────────
@@ -235,18 +499,22 @@ public class AIController {
         state[11] = Integer.bitCount(ownedMask) / 9f;
 
         long elapsed = (System.currentTimeMillis() - startTime) / 1000;
-        state[12] = Math.min(1.0f, elapsed / 600f);
+        state[12] = Math.min(1.0f, elapsed / 120f);  // saturates at 2 min (was 600f/10min)
 
         state[13] = Math.min(1.0f, GameState.getKillCount() / 100f);
         state[14] = Math.min(1.0f, GameState.getSecretCount() / 10f);
 
-        // ── Stuck detection ──
-        int currX = GameState.getPlayerX();
-        int currY = GameState.getPlayerY();
+        // ── Stuck detection (only increment on movement actions: 1=FWD..6=STRAFER) ──
+        currX = GameState.getPlayerX();
+        currY = GameState.getPlayerY();
+        boolean isMovementAction = (prevAction >= 1 && prevAction <= 6);
         if (currX == prevX && currY == prevY) {
-            stuckCounter++;  // position unchanged this step
+            if (isMovementAction) {
+                stuckCounter++;  // movement action but no position change = stuck
+            }
+            // else: FIRE/USE/weapon-switch/NOOP — don't count as stuck
         } else {
-            stuckCounter = 0;  // moved — reset
+            stuckCounter = 0;  // moved — reset regardless of action type
         }
         prevX = currX;
         prevY = currY;
@@ -264,11 +532,12 @@ public class AIController {
     // ──────── Reward Function ────────
 
     /**
-     * Reward based on real game outcomes.
-     * +kills, +secrets, +items, -damage, +alive_bonus.
+     * Reward based on real game outcomes (v2.3 — balanced).
+     * +kills, +secrets, +exploration, -damage, -stuck, -NOOP.
+     * Alive bonus reduced to prevent passive strategy.
      */
     private float calculateReward(float[] prev, float[] curr, int action) {
-        float reward = 0.01f; // alive bonus
+        float reward = 0.003f; // alive bonus (was 0.01f — too large, encouraged passivity)
 
         // Kill reward
         float killDelta = curr[13] - prev[13];
@@ -288,8 +557,8 @@ public class AIController {
         float healthDelta = curr[0] - prev[0];
         if (healthDelta < 0) reward += healthDelta * 0.5f;
 
-        // ── Stuck penalty (continuous) ──
-        if (curr[15] > 0.5f) reward -= curr[15] * 0.15f;  // grows with stuck time
+        // ── Stuck penalty (increased: -0.20 * stuckLevel, was -0.15) ──
+        if (curr[15] > 0.5f) reward -= curr[15] * 0.20f;
 
         // ── Fire effectiveness ──
         if (action == 7) {
@@ -301,10 +570,16 @@ public class AIController {
             }
         }
 
-        // ── Action shaping ──
-        if (action == 0) reward -= 0.005f;        // NOOP
+        // ── Action shaping (rebalanced) ──
+        if (action == 0) reward -= 0.01f;         // NOOP penalty (was 0.005f — too weak)
         if (action >= 1 && action <= 6) reward += 0.003f;  // movement
         if (action >= 10) reward += 0.005f;       // weapon switch (exploration)
+
+        // ── Exploration bonus: reward significant position change ──
+        // Position is tracked via prevX/prevY in extractState; if we moved, encourage it
+        if (currX != prevX || currY != prevY) {
+            reward += 0.002f;  // small bonus for any position change
+        }
 
         return reward;
     }
