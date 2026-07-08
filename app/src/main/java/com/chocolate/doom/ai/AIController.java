@@ -420,10 +420,14 @@ public class AIController {
                     Thread.sleep(2000);
                 }
 
-                // 1. Press ESC to break out of demo loop / ensure we're at menu
-                //    On Freedoom title screen, this shows the main menu
-                injectKey(111, 150);   // ESC
-                Thread.sleep(800);
+                // 1. Ensure we're at the main menu.
+                //    ESC toggles the menu: if open → closes it; if closed → opens it.
+                //    Strategy: press ESC to close any menu → press Enter at title screen
+                //    ("press any key" shows main menu) → then Enter for "New Game".
+                injectKey(111, 150);   // ESC — close any open menu/submenu
+                Thread.sleep(400);
+                injectKey(66, 150);    // ENTER — at title screen, this shows main menu
+                Thread.sleep(600);
 
                 // 2. Press Enter to select "New Game"
                 //    On the main menu, "New Game" is the first item (default highlight)
